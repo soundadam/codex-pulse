@@ -13,7 +13,7 @@ The app inherits the permissions of the launching macOS user. Anyone with access
 
 ## Release trust
 
-Version 1.0 is universal and hardened-runtime but ad-hoc signed. It is not Apple-notarized. Verify release downloads against the `.sha256` file attached to the GitHub release, and use the documented `HOMEBREW_CASK_OPTS="--no-quarantine"` installation only for the official `soundadam/codex-pulse` release asset.
+Version 1.0 is universal and hardened-runtime but ad-hoc signed. It is not Apple-notarized. Homebrew verifies the Cask SHA-256 before installation; remove quarantine only after installing the official `soundadam/tap/codex-pulse` Cask. Direct downloads can be checked against the `.sha256` file attached to the GitHub release.
 
 ## Reporting a vulnerability
 

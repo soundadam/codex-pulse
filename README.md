@@ -21,11 +21,12 @@ The entire monitor lives in the macOS menu bar. It stays quiet in the background
 ## Install with Homebrew
 
 ```bash
-HOMEBREW_CASK_OPTS="--no-quarantine" brew install --cask soundadam/tap/codex-pulse
+brew install --cask soundadam/tap/codex-pulse
+xattr -dr com.apple.quarantine "/Applications/Codex Pulse.app"
 open -a "Codex Pulse"
 ```
 
-The 1.0 build is hardened-runtime, ad-hoc signed, and universal for Apple Silicon and Intel Macs. It is not yet Apple-notarized, so the install command sets Homebrew Cask's `--no-quarantine` option through `HOMEBREW_CASK_OPTS`. See [Release and signing](docs/release.md) for the trust boundary and the future notarization path.
+The 1.0 build is hardened-runtime, ad-hoc signed, and universal for Apple Silicon and Intel Macs. It is not yet Apple-notarized, so Homebrew verifies the release checksum first and the explicit `xattr` step removes quarantine before first launch. See [Release and signing](docs/release.md) for the trust boundary and the future notarization path.
 
 You can also download `Codex-Pulse-1.0.0-macOS-universal.zip` from the [latest release](https://github.com/soundadam/codex-pulse/releases/latest), move the app to `/Applications`, and remove quarantine before first launch:
 
