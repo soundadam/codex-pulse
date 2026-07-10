@@ -23,6 +23,6 @@ cask "codex-pulse" do
 
   caveats <<~EOS
     Codex Pulse 1.0 is ad-hoc signed but not Apple-notarized.
-    Install this personal-tap release with Homebrew's --no-quarantine option.
+    Install this release with HOMEBREW_CASK_OPTS="--no-quarantine".
   EOS
 end

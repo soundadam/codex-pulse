@@ -33,16 +33,16 @@ The release workflow validates the package and publishes both files from `dist/`
 The public install command is:
 
 ```bash
-brew install --cask --no-quarantine soundadam/tap/codex-pulse
+HOMEBREW_CASK_OPTS="--no-quarantine" brew install --cask soundadam/tap/codex-pulse
 ```
 
 The Cask lives in `soundadam/homebrew-tap/Casks/codex-pulse.rb`. After publishing a new release:
 
 1. Copy the release archive SHA-256 into the Cask.
 2. Update the version and URL if the archive naming contract changes.
-3. Run `brew audit --cask --online soundadam/tap/codex-pulse` and `brew install --cask --no-quarantine soundadam/tap/codex-pulse`.
+3. Run `brew audit --cask --strict --online soundadam/tap/codex-pulse` and `HOMEBREW_CASK_OPTS="--no-quarantine" brew install --cask soundadam/tap/codex-pulse`.
 4. Launch the installed application and confirm app-server discovery, realtime subscription, Turn detail loading, and rollout opening.
 
 ## Notarization upgrade
 
-When a Developer ID Application certificate is available, replace ad-hoc signing with Developer ID signing, submit the zip with `notarytool`, staple the result, and remove `--no-quarantine` from the public installation command and Cask caveats.
+When a Developer ID Application certificate is available, replace ad-hoc signing with Developer ID signing, submit the zip with `notarytool`, staple the result, and remove the `HOMEBREW_CASK_OPTS` override from the public installation command and Cask caveats.
