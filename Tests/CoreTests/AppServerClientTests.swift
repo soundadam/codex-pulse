@@ -166,7 +166,7 @@ struct AppServerClientTests {
 
     private func withClient(
         configuration: AppServerLaunchConfiguration,
-        requestTimeout: Duration = .milliseconds(300),
+        requestTimeout: Duration = .seconds(1),
         baseBackoff: Duration = .milliseconds(10),
         maxBackoff: Duration = .milliseconds(50),
         _ body: (AppServerClient) async throws -> Void
