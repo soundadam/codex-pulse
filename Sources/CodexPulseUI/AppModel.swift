@@ -3,17 +3,12 @@ import Core
 import Foundation
 import Observation
 
-public enum TimelineTab: String, CaseIterable, Sendable {
-    case allTurns
-    case threadDetail
-}
-
 @MainActor
 @Observable
 public final class AppModel {
     let suspiciousModulo: Int
     let refreshInterval: Duration
-    let sessionLimit: Int
+    let timelinePointLimit: Int
     let threadFetchLimit: Int
     let timelineLookbackSeconds: TimeInterval
     let cwdFilters: [String]
@@ -21,7 +16,7 @@ public final class AppModel {
     let liveSampleReasoningStep: Int
 
     var searchQuery = "" {
-        didSet { normalizeSelection() }
+        didSet { normalizeTimelineSelection() }
     }
 
     private(set) var snapshot: MonitorSnapshot?
@@ -30,10 +25,9 @@ public final class AppModel {
     private(set) var errorMessage: String?
     private(set) var dataWarningMessage: String?
     private(set) var statusTitle = "Cdx"
-    private(set) var selectedTab: TimelineTab = .allTurns
+    private(set) var selectedTimelineWindow: TimelineWindow = .thirtyMinutes
     private(set) var selectedSessionKey: String?
     private(set) var selectedThreadID: String?
-    private(set) var selectedTurnKey: String?
 
     var onStatusTitleChange: ((String) -> Void)?
 
@@ -47,13 +41,25 @@ public final class AppModel {
     private var refreshLoopTask: Task<Void, Never>?
     private var notificationState: NotificationPolicyState
     private var hasBoundRealtimeService = false
+    private var consecutiveRefreshFailures = 0
     private var latestThreadsByID: [String: CodexThreadRef] = [:]
     private var liveTelemetry: LiveTelemetryStore
-    private var trackedDetailedThreadID: String?
 
     public convenience init() {
+        let launchConfiguration = AppServerLaunchConfiguration.codexAppServer()
+        let discoveryClient = AppServerClient(
+            launchConfiguration: launchConfiguration,
+            requestTimeout: .seconds(15),
+            timeoutFailureThreshold: 2
+        )
+        let realtimeClient = AppServerClient(
+            launchConfiguration: launchConfiguration,
+            requestTimeout: .seconds(15),
+            timeoutFailureThreshold: 2
+        )
         self.init(
-            discoveryService: AppServerClient(),
+            discoveryService: discoveryClient,
+            realtimeService: realtimeClient,
             rolloutParser: RolloutParser(),
             notificationSender: SystemNotificationSender(),
             notificationStore: UserDefaultsNotificationStateStore()
@@ -62,14 +68,15 @@ public final class AppModel {
 
     init(
         discoveryService: any ThreadDiscoveryService = AppServerClient(),
+        realtimeService: (any ThreadRealtimeSubscribing)? = nil,
         rolloutParser: RolloutParser = RolloutParser(),
         notificationSender: any NotificationSending = SystemNotificationSender(),
         notificationStore: any NotificationStatePersisting = UserDefaultsNotificationStateStore(),
         suspiciousModulo: Int = 516,
-        refreshInterval: Duration = .seconds(1),
-        sessionLimit: Int = 10,
-        threadFetchLimit: Int? = nil,
-        timelineLookbackSeconds: TimeInterval = 3600,
+        refreshInterval: Duration = .seconds(3),
+        timelinePointLimit: Int = 240,
+        threadFetchLimit: Int = 40,
+        timelineLookbackSeconds: TimeInterval = 3_600,
         liveSampleMinimumInterval: TimeInterval = 2,
         liveSampleReasoningStep: Int = 128,
         cwdFilters: [String] = [],
@@ -84,21 +91,21 @@ public final class AppModel {
         self.notificationStore = notificationStore
         self.suspiciousModulo = suspiciousModulo
         self.refreshInterval = refreshInterval
-        self.sessionLimit = sessionLimit
-        self.threadFetchLimit = threadFetchLimit ?? max(sessionLimit * 4, 12)
+        self.timelinePointLimit = max(1, timelinePointLimit)
+        self.threadFetchLimit = max(1, threadFetchLimit)
         self.timelineLookbackSeconds = timelineLookbackSeconds
         self.liveSampleMinimumInterval = liveSampleMinimumInterval
         self.liveSampleReasoningStep = liveSampleReasoningStep
         self.cwdFilters = cwdFilters
         self.nowProvider = nowProvider
-        self.realtimeService = discoveryService as? any ThreadRealtimeSubscribing
+        self.realtimeService = realtimeService ?? (discoveryService as? any ThreadRealtimeSubscribing)
         self.liveTelemetry = LiveTelemetryStore(
             configuration: LiveTelemetryConfiguration(
                 suspiciousModulo: suspiciousModulo,
                 lookbackSeconds: timelineLookbackSeconds,
                 overviewSampleMinimumInterval: liveSampleMinimumInterval,
                 overviewSampleReasoningStep: liveSampleReasoningStep,
-                overviewSessionLimit: max(sessionLimit * 3, 24)
+                overviewSessionLimit: 120
             )
         )
         self.notificationState = NotificationPolicyState(
@@ -107,30 +114,46 @@ public final class AppModel {
         updateStatusTitle()
     }
 
-    var filteredCompletedSessions: [CompletedSession] {
-        visibleTimelineSessions.filter { $0.matches(searchQuery: searchQuery) }
+    var timelineSeries: [ThreadTimelineSeries] {
+        TimelinePresentationBuilder.build(
+            sessions: retainedTimelineSessions,
+            searchQuery: searchQuery,
+            window: selectedTimelineWindow,
+            now: nowProvider(),
+            pointLimit: timelinePointLimit
+        )
+    }
+
+    var timelinePoints: [TimelinePoint] {
+        timelineSeries
+            .flatMap(\.points)
+            .sorted(by: timelinePointDateAscending)
     }
 
     var recentReasoningSessions: [CompletedSession] {
-        filteredCompletedSessions.sorted(by: timelineDateAscending)
+        timelinePoints.map(\.session)
+    }
+
+    var selectedTimelinePoint: TimelinePoint? {
+        guard let selectedSessionKey else {
+            return nil
+        }
+        return timelinePoints.first(where: { $0.id == selectedSessionKey })
     }
 
     var selectedCompletedSession: CompletedSession? {
-        let sessions = filteredCompletedSessions
-        if let selectedSessionKey,
-           let selected = sessions.first(where: { $0.key == selectedSessionKey }) {
-            return selected
+        selectedTimelinePoint?.session
+    }
+
+    var selectedThreadSeries: ThreadTimelineSeries? {
+        guard let selectedThreadID else {
+            return nil
         }
-        return sessions.first
+        return timelineSeries.first(where: { $0.threadID == selectedThreadID })
     }
 
     var invalidTimelineTurnCount: Int {
-        Set(
-            visibleTimelineSessions
-                .filter(\.isInvalidReasoning)
-                .map { $0.turnKey ?? $0.key }
-        )
-        .count
+        timelinePoints.filter { $0.session.signalState == .invalid }.count
     }
 
     var runningThreadCount: Int {
@@ -138,161 +161,22 @@ public final class AppModel {
     }
 
     var observedTimelineTurnCount: Int {
-        Set(
-            visibleTimelineSessions
-                .filter { $0.signalState == .valid }
-                .map { $0.turnKey ?? $0.key }
-        )
-        .count
+        timelinePoints.filter { $0.session.signalState == .valid }.count
     }
 
     var unknownTimelineTurnCount: Int {
-        Set(
-            visibleTimelineSessions
-                .filter { $0.signalState == .unknown }
-                .map { $0.turnKey ?? $0.key }
-        )
-        .count
-    }
-
-    var selectedTimelineThreadGroup: ThreadTurnGroup? {
-        guard let session = selectedCompletedSession else {
-            return nil
-        }
-
-        let fallbackTurn = turnDetail(from: session)
-
-        guard let thread = snapshot?.threads.first(where: { $0.id == session.threadId }) else {
-            return ThreadTurnGroup(
-                threadId: session.threadId,
-                threadTitle: session.threadTitle,
-                projectName: session.projectName,
-                subtitle: session.subtitle,
-                turns: [fallbackTurn]
-            )
-        }
-
-        let merged = mergedThreadTurnGroup(for: thread)
-        let visibleTurns = merged.turns.filter(isTurnWithinVisibleWindow)
-        guard visibleTurns.isEmpty == false else {
-            return ThreadTurnGroup(
-                threadId: session.threadId,
-                threadTitle: session.threadTitle,
-                projectName: session.projectName,
-                subtitle: session.subtitle,
-                turns: [fallbackTurn]
-            )
-        }
-
-        return ThreadTurnGroup(
-            threadId: merged.threadId,
-            threadTitle: merged.threadTitle,
-            projectName: merged.projectName,
-            subtitle: merged.subtitle,
-            turns: visibleTurns
-        )
-    }
-
-    var selectedTimelineTurns: [TurnDetailItem] {
-        selectedTimelineThreadGroup?.turns ?? []
+        timelinePoints.filter { $0.session.signalState == .unknown }.count
     }
 
     var selectedTimelineTurnDetail: TurnDetailItem? {
-        let turns = selectedTimelineTurns
-        guard turns.isEmpty == false else {
-            return nil
-        }
-
-        if let selectedTurnKey,
-           let selected = turns.first(where: { $0.key == selectedTurnKey }) {
-            return selected
-        }
-
-        if let sessionTurnKey = selectedCompletedSession?.turnKey,
-           let selected = turns.first(where: { $0.key == sessionTurnKey }) {
-            return selected
-        }
-
-        return turns.first
+        selectedCompletedSession.map(turnDetail(from:))
     }
 
     var selectedTimelineTurnSamples: [LiveTurnSample] {
-        guard let turn = selectedTimelineTurnDetail else {
+        guard let turnKey = selectedCompletedSession?.turnKey else {
             return []
         }
-        return liveSamples(forTurnKey: turn.key, threadID: turn.threadId)
-    }
-
-    var threadDetailThreads: [MonitorThread] {
-        guard let snapshot else {
-            return []
-        }
-
-        let visibleThreads = snapshot.threads.filter(isThreadWithinVisibleWindow)
-        let query = normalizedSearchQuery
-        guard query.isEmpty == false else {
-            return visibleThreads
-        }
-
-        return visibleThreads.filter { thread in
-            let haystack = [
-                thread.projectName,
-                thread.projectSubtitle,
-                thread.threadTitle,
-                thread.preview,
-                thread.latestTurn?.lastAgentMessage ?? "",
-            ]
-            .joined(separator: "\n")
-            .lowercased()
-            return haystack.contains(query)
-        }
-    }
-
-    var selectedThread: MonitorThread? {
-        let threads = threadDetailThreads
-        if let selectedThreadID,
-           let selected = threads.first(where: { $0.id == selectedThreadID }) {
-            return selected
-        }
-        return threads.first
-    }
-
-    var selectedThreadTurnGroup: ThreadTurnGroup? {
-        guard let selectedThread else {
-            return nil
-        }
-        let merged = mergedThreadTurnGroup(for: selectedThread)
-        let visibleTurns = merged.turns.filter(isTurnWithinVisibleWindow)
-        guard visibleTurns.isEmpty == false else {
-            return nil
-        }
-        return ThreadTurnGroup(
-            threadId: merged.threadId,
-            threadTitle: merged.threadTitle,
-            projectName: merged.projectName,
-            subtitle: merged.subtitle,
-            turns: visibleTurns
-        )
-    }
-
-    var selectedThreadTurns: [TurnDetailItem] {
-        selectedThreadTurnGroup?.turns ?? []
-    }
-
-    var selectedTurnDetail: TurnDetailItem? {
-        let turns = selectedThreadTurns
-        if let selectedTurnKey,
-           let selected = turns.first(where: { $0.key == selectedTurnKey }) {
-            return selected
-        }
-        return turns.first
-    }
-
-    var selectedTurnSamples: [LiveTurnSample] {
-        guard let selectedTurnDetail else {
-            return []
-        }
-        return liveSamples(forTurnKey: selectedTurnDetail.key, threadID: selectedTurnDetail.threadId)
+        return liveTelemetry.samples(forTurnKey: turnKey)
     }
 
     var errorBannerMessage: String? {
@@ -300,6 +184,11 @@ public final class AppModel {
             return errorMessage
         }
         return dataWarningMessage
+    }
+
+    var timelineDomain: ClosedRange<Date> {
+        let upper = nowProvider()
+        return upper.addingTimeInterval(-selectedTimelineWindow.duration)...upper
     }
 
     public func start() {
@@ -325,11 +214,19 @@ public final class AppModel {
     public func stop() {
         refreshLoopTask?.cancel()
         refreshLoopTask = nil
-        if let realtimeService {
-            Task { await realtimeService.syncSubscriptions(threadIDs: []) }
-        }
-        if let appServerClient = discoveryService as? AppServerClient {
-            Task { await appServerClient.shutdown() }
+        let realtimeService = self.realtimeService
+        let realtimeClient = realtimeService as? AppServerClient
+        let discoveryClient = discoveryService as? AppServerClient
+        Task {
+            if let realtimeService {
+                await realtimeService.syncSubscriptions(threadIDs: [])
+            }
+            if let realtimeClient {
+                await realtimeClient.shutdown()
+            }
+            if let discoveryClient {
+                await discoveryClient.shutdown()
+            }
         }
     }
 
@@ -337,81 +234,70 @@ public final class AppModel {
         Task { await performRefresh() }
     }
 
-    func setSelectedTab(_ tab: TimelineTab) {
-        selectedTab = tab
-        normalizeSelection()
+    func setTimelineWindow(_ window: TimelineWindow) {
+        selectedTimelineWindow = window
+        normalizeTimelineSelection()
+        updateStatusTitle()
+    }
+
+    func selectTimelinePoint(_ pointID: String) {
+        guard let point = timelinePoints.first(where: { $0.id == pointID }) else {
+            return
+        }
+        selectedSessionKey = point.id
+        selectedThreadID = point.threadID
         syncRealtimeSubscriptionsIfPossible()
     }
 
     func selectSession(_ key: String?) {
-        selectedSessionKey = key
-        normalizeOverviewSelection()
-        syncDetailSelectionFromSelectedSession(forceTurnSelection: true)
-        normalizeDetailSelection()
-        syncRealtimeSubscriptionsIfPossible()
+        guard let key else {
+            selectedSessionKey = nil
+            return
+        }
+        selectTimelinePoint(key)
     }
 
-    func selectThread(_ threadID: String?) {
+    func selectThreadLine(_ threadID: String) {
+        guard timelineSeries.contains(where: { $0.threadID == threadID }) else {
+            return
+        }
         selectedThreadID = threadID
-        normalizeSelection()
+        selectedSessionKey = nil
         syncRealtimeSubscriptionsIfPossible()
     }
 
-    func selectTurn(_ key: String?) {
-        selectedTurnKey = key
+    func resetTimelineFocus() {
+        selectedSessionKey = nil
+        selectedThreadID = nil
+        syncRealtimeSubscriptionsIfPossible()
     }
 
     func moveSelection(offset: Int) {
-        switch selectedTab {
-        case .allTurns:
-            let sessions = filteredCompletedSessions
-            guard sessions.isEmpty == false else {
-                selectedSessionKey = nil
-                return
-            }
-
-            guard let currentSelection = selectedSessionKey,
-                  let currentIndex = sessions.firstIndex(where: { $0.key == currentSelection }) else {
-                selectedSessionKey = sessions.last?.key
-                syncDetailSelectionFromSelectedSession(forceTurnSelection: true)
-                syncRealtimeSubscriptionsIfPossible()
-                return
-            }
-
-            let nextIndex = min(max(currentIndex + offset, 0), sessions.count - 1)
-            selectedSessionKey = sessions[nextIndex].key
-            syncDetailSelectionFromSelectedSession(forceTurnSelection: true)
-            syncRealtimeSubscriptionsIfPossible()
-
-        case .threadDetail:
-            let turns = selectedThreadTurns
-            guard turns.isEmpty == false else {
-                selectedTurnKey = nil
-                return
-            }
-
-            guard let currentTurnKey = selectedTurnKey,
-                  let currentIndex = turns.firstIndex(where: { $0.key == currentTurnKey }) else {
-                self.selectedTurnKey = turns.first?.key
-                return
-            }
-
-            let nextIndex = min(max(currentIndex + offset, 0), turns.count - 1)
-            selectedTurnKey = turns[nextIndex].key
+        let points: [TimelinePoint]
+        if let selectedThreadSeries {
+            points = selectedThreadSeries.points
+        } else {
+            points = timelinePoints
         }
+
+        guard points.isEmpty == false else {
+            selectedSessionKey = nil
+            return
+        }
+
+        guard let selectedSessionKey,
+              let currentIndex = points.firstIndex(where: { $0.id == selectedSessionKey }) else {
+            selectTimelinePoint(points.last!.id)
+            return
+        }
+
+        let nextIndex = min(max(currentIndex + offset, 0), points.count - 1)
+        selectTimelinePoint(points[nextIndex].id)
     }
 
     @discardableResult
     func openSelectedRollout() -> Bool {
-        let path: String?
-        switch selectedTab {
-        case .allTurns:
-            path = selectedTimelineTurnDetail?.rolloutPath ?? selectedCompletedSession?.rolloutPath
-        case .threadDetail:
-            path = selectedTurnDetail?.rolloutPath
-        }
-
-        guard let path else {
+        guard let path = selectedCompletedSession?.rolloutPath else {
             return false
         }
         return NSWorkspace.shared.open(URL(fileURLWithPath: path))
@@ -435,18 +321,18 @@ public final class AppModel {
                 suspiciousModulo: suspiciousModulo
             )
             let snapshot = refresh.snapshot
-            let discoveredThreads = refresh.discoveredThreads
 
             self.snapshot = snapshot
             self.latestThreadsByID = Dictionary(
-                uniqueKeysWithValues: discoveredThreads.map { ($0.id, $0) }
+                uniqueKeysWithValues: refresh.discoveredThreads.map { ($0.id, $0) }
             )
             reconcileCompletedTurns(with: snapshot)
+            consecutiveRefreshFailures = 0
             self.errorMessage = nil
             self.dataWarningMessage = refresh.skippedRolloutCount > 0
                 ? "Could not read \(refresh.skippedRolloutCount) rollout \(refresh.skippedRolloutCount == 1 ? "file" : "files"). Live data is still available."
                 : nil
-            normalizeSelection()
+            normalizeTimelineSelection()
             syncRealtimeSubscriptionsIfPossible()
 
             let completions = NotificationPolicy.collectNewSuspiciousCompletedTurns(
@@ -462,98 +348,32 @@ public final class AppModel {
 
             updateStatusTitle()
         } catch {
-            errorMessage = error.localizedDescription
+            consecutiveRefreshFailures += 1
+            if snapshot == nil || consecutiveRefreshFailures >= 2 {
+                errorMessage = error.localizedDescription
+            }
             dataWarningMessage = nil
+            normalizeTimelineSelection()
             updateStatusTitle()
         }
     }
 
-    private func normalizeSelection() {
-        let previousSessionKey = selectedSessionKey
-        normalizeOverviewSelection()
-        if previousSessionKey != selectedSessionKey {
-            syncDetailSelectionFromSelectedSession(forceTurnSelection: true)
-        }
-        normalizeDetailSelection()
-    }
+    private func normalizeTimelineSelection() {
+        let series = timelineSeries
+        let visibleThreadIDs = Set(series.map(\.threadID))
 
-    private func normalizeOverviewSelection() {
-        let sessions = filteredCompletedSessions
-        if sessions.isEmpty {
+        if let selectedThreadID, visibleThreadIDs.contains(selectedThreadID) == false {
+            self.selectedThreadID = nil
             selectedSessionKey = nil
             return
         }
 
-        if let selectedSessionKey,
-           sessions.contains(where: { $0.key == selectedSessionKey }) {
-            return
-        }
-
-        selectedSessionKey = sessions.last?.key
-    }
-
-    private func normalizeDetailSelection() {
-        let threads = threadDetailThreads
-        if threads.isEmpty {
-            selectedThreadID = nil
-            selectedTurnKey = nil
-            trackedDetailedThreadID = nil
-            return
-        }
-
-        if let selectedThreadID,
-           threads.contains(where: { $0.id == selectedThreadID }) == false {
-            self.selectedThreadID = nil
-        }
-
-        if selectedThreadID == nil {
-            selectedThreadID = threads.first?.id
-        }
-
-        if trackedDetailedThreadID != selectedThreadID {
-            trackedDetailedThreadID = selectedThreadID
-            selectedTurnKey = nil
-        }
-
-        let turns = selectedThreadTurns
-        if turns.isEmpty {
-            selectedTurnKey = nil
-            return
-        }
-
-        if let selectedTurnKey,
-           turns.contains(where: { $0.key == selectedTurnKey }) {
-            return
-        }
-
-        selectedTurnKey = turns.first?.key
-    }
-
-    private func syncDetailSelectionFromSelectedSession(forceTurnSelection: Bool) {
-        guard let session = selectedCompletedSession else {
-            return
-        }
-
-        let nextThreadID = session.threadId
-        let threadChanged = selectedThreadID != nextThreadID
-        selectedThreadID = nextThreadID
-
-        if trackedDetailedThreadID != nextThreadID {
-            trackedDetailedThreadID = nextThreadID
-            if threadChanged == false {
-                selectedTurnKey = nil
+        if let selectedSessionKey {
+            guard let point = series.flatMap(\.points).first(where: { $0.id == selectedSessionKey }) else {
+                self.selectedSessionKey = nil
+                return
             }
-        }
-
-        guard let sessionTurnKey = session.turnKey else {
-            if forceTurnSelection {
-                selectedTurnKey = nil
-            }
-            return
-        }
-
-        if forceTurnSelection || threadChanged || selectedTurnKey == nil {
-            selectedTurnKey = sessionTurnKey
+            selectedThreadID = point.threadID
         }
     }
 
@@ -590,7 +410,7 @@ public final class AppModel {
                 context: liveSessionContext(for: update.threadId),
                 referenceDate: nowProvider()
             )
-            normalizeSelection()
+            normalizeTimelineSelection()
             updateStatusTitle()
         case .turnCompleted:
             refreshNow()
@@ -638,7 +458,6 @@ public final class AppModel {
     private func subscriptionCandidateIDs(from snapshot: MonitorSnapshot) -> [String] {
         let runningThreadIDs = snapshot.threads
             .filter { $0.monitorState == .running }
-            .prefix(3)
             .map(\.id)
 
         var selectedThreadIDs = Set(runningThreadIDs)
@@ -651,6 +470,54 @@ public final class AppModel {
         }
 
         return snapshot.threads.map(\.id).filter { selectedThreadIDs.contains($0) }
+    }
+
+    private var retainedTimelineSessions: [CompletedSession] {
+        (retainedCompletedSessions + retainedLiveSessions)
+            .sorted(by: timelineSessionDateAscending)
+    }
+
+    private var retainedCompletedSessions: [CompletedSession] {
+        guard let snapshot else {
+            return []
+        }
+
+        let cutoff = nowProvider().addingTimeInterval(-timelineLookbackSeconds)
+        return snapshot.completedSessions
+            .filter { ($0.completedAt ?? $0.startedAt ?? .distantPast) >= cutoff }
+            .map(liveTelemetry.applyingSignal(to:))
+            .map(attachingRetainedLiveSamples(to:))
+    }
+
+    private var retainedLiveSessions: [CompletedSession] {
+        liveTelemetry.visibleOverviewSessions(referenceDate: nowProvider())
+            .map(attachingRetainedLiveSamples(to:))
+    }
+
+    private func attachingRetainedLiveSamples(to session: CompletedSession) -> CompletedSession {
+        guard let turnKey = session.turnKey else {
+            return session
+        }
+
+        let liveSamples = liveTelemetry.samples(forTurnKey: turnKey).map {
+            TurnReasoningSample(observedAt: $0.observedAt, tokenUsage: $0.tokenUsage)
+        }
+        guard liveSamples.isEmpty == false else {
+            return session
+        }
+
+        let merged = (session.reasoningSamples + liveSamples)
+            .reduce(into: [String: TurnReasoningSample]()) { result, sample in
+                result[sample.id] = sample
+            }
+            .values
+            .sorted { left, right in
+                if left.observedAt != right.observedAt {
+                    return left.observedAt < right.observedAt
+                }
+                return left.id < right.id
+            }
+        return session.withReasoningSamples(merged)
     }
 
     private func projectName(for thread: CodexThreadRef?) -> String {
@@ -684,117 +551,6 @@ public final class AppModel {
         return normalized.isEmpty ? nil : normalized
     }
 
-    private var visibleTimelineSessions: [CompletedSession] {
-        let combined = (visibleCompletedSessions + visibleOverviewLiveSessions)
-            .sorted(by: timelineDateAscending)
-        return Array(combined.suffix(max(sessionLimit * 3, 24)))
-    }
-
-    private var visibleCompletedSessions: [CompletedSession] {
-        guard let snapshot else {
-            return []
-        }
-
-        let allSessions = snapshot.completedSessions
-        let cutoff = nowProvider().addingTimeInterval(-timelineLookbackSeconds)
-        let recentSessions = allSessions.filter {
-            ($0.completedAt ?? $0.startedAt ?? .distantPast) >= cutoff
-        }
-        return Array(recentSessions.prefix(sessionLimit)).map(applyHistoricalSignalState)
-    }
-
-    private var visibleOverviewLiveSessions: [CompletedSession] {
-        liveTelemetry.visibleOverviewSessions(referenceDate: nowProvider())
-    }
-
-    private var normalizedSearchQuery: String {
-        searchQuery
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-    }
-
-    private func applyHistoricalSignalState(_ session: CompletedSession) -> CompletedSession {
-        liveTelemetry.applyingSignal(to: session)
-    }
-
-    private func applyHistoricalSignalState(to item: TurnDetailItem) -> TurnDetailItem {
-        liveTelemetry.applyingSignal(to: item)
-    }
-
-    private func mergedThreadTurnGroup(for thread: MonitorThread) -> ThreadTurnGroup {
-        let baseGroup = snapshot?.threadTurnGroups.first(where: { $0.threadId == thread.id })
-        var itemsByKey = Dictionary(
-            uniqueKeysWithValues: (baseGroup?.turns ?? []).map { ($0.key, applyHistoricalSignalState(to: $0)) }
-        )
-
-        for (turnKey, samples) in liveTelemetry.sampleBuckets(forThreadID: thread.id) {
-            guard let latestSample = samples.max(by: { left, right in
-                if left.observedAt != right.observedAt {
-                    return left.observedAt < right.observedAt
-                }
-                return left.id < right.id
-            }) else {
-                continue
-            }
-
-            let base = itemsByKey[turnKey]
-            let nextSignalState = liveTelemetry.signalState(for: turnKey)
-            let status: MonitorState
-            if nextSignalState == .invalid {
-                status = .suspicious
-            } else if base?.completedAt != nil {
-                status = .normal
-            } else {
-                status = .running
-            }
-
-            itemsByKey[turnKey] = TurnDetailItem(
-                key: turnKey,
-                threadId: thread.id,
-                turnId: latestSample.turnId,
-                startedAt: base?.startedAt ?? thread.latestTurn?.startedAt,
-                completedAt: base?.completedAt,
-                model: base?.model ?? thread.latestTurn?.model,
-                reasoningEffort: base?.reasoningEffort ?? thread.latestTurn?.reasoningEffort,
-                lastUsage: latestSample.tokenUsage.last,
-                totalUsage: latestSample.tokenUsage.total,
-                hadInvalidSignal: nextSignalState == .invalid,
-                status: status,
-                assistantPreview: base?.assistantPreview ?? thread.latestTurn?.lastAgentMessage ?? latestThreadsByID[thread.id]?.preview,
-                rolloutPath: base?.rolloutPath ?? thread.rolloutPath
-            )
-        }
-
-        let turns = itemsByKey.values.sorted(by: turnDetailNewestFirst)
-        return ThreadTurnGroup(
-            threadId: thread.id,
-            threadTitle: thread.threadTitle,
-            projectName: thread.projectName,
-            subtitle: thread.projectSubtitle,
-            turns: turns
-        )
-    }
-
-    private func isThreadWithinVisibleWindow(_ thread: MonitorThread) -> Bool {
-        let cutoff = nowProvider().addingTimeInterval(-timelineLookbackSeconds)
-        if let latestUpdateAt = thread.latestUpdateAt, latestUpdateAt >= cutoff {
-            return true
-        }
-
-        return liveTelemetry.hasActivity(threadID: thread.id, since: cutoff)
-    }
-
-    private func isTurnWithinVisibleWindow(_ turn: TurnDetailItem) -> Bool {
-        let cutoff = nowProvider().addingTimeInterval(-timelineLookbackSeconds)
-        if let liveSampleTime = liveTelemetry.latestObservedAt(forTurnKey: turn.key),
-           liveSampleTime >= cutoff {
-            return true
-        }
-
-        let timestamp = turn.completedAt ?? turn.startedAt ?? .distantPast
-        return timestamp >= cutoff
-    }
-
     private func turnDetail(from session: CompletedSession) -> TurnDetailItem {
         TurnDetailItem(
             key: session.turnKey ?? session.key,
@@ -813,28 +569,19 @@ public final class AppModel {
         )
     }
 
-    private func liveSamples(forTurnKey turnKey: String, threadID: String) -> [LiveTurnSample] {
-        guard liveTelemetry.sampleBuckets(forThreadID: threadID)[turnKey] != nil else {
-            return []
-        }
-        return liveTelemetry.samples(forTurnKey: turnKey)
-    }
-
-    private func timelineDateAscending(_ left: CompletedSession, _ right: CompletedSession) -> Bool {
+    private func timelineSessionDateAscending(_ left: CompletedSession, _ right: CompletedSession) -> Bool {
         let leftDate = left.completedAt ?? left.startedAt ?? .distantPast
         let rightDate = right.completedAt ?? right.startedAt ?? .distantPast
         if leftDate != rightDate {
             return leftDate < rightDate
         }
-        return left.key.localizedCaseInsensitiveCompare(right.key) == .orderedAscending
+        return left.key < right.key
     }
 
-    private func turnDetailNewestFirst(_ left: TurnDetailItem, _ right: TurnDetailItem) -> Bool {
-        let leftDate = left.completedAt ?? left.startedAt ?? .distantPast
-        let rightDate = right.completedAt ?? right.startedAt ?? .distantPast
-        if leftDate != rightDate {
-            return leftDate > rightDate
+    private func timelinePointDateAscending(_ left: TimelinePoint, _ right: TimelinePoint) -> Bool {
+        if left.timestamp != right.timestamp {
+            return left.timestamp < right.timestamp
         }
-        return left.key.localizedCaseInsensitiveCompare(right.key) == .orderedAscending
+        return left.id < right.id
     }
 }

@@ -32,6 +32,11 @@ struct RolloutParserTests {
         #expect(latest.lastUsage.totalTokens == 19)
         #expect(latest.totalUsage.reasoningOutputTokens == 516)
         #expect(latest.totalUsage.totalTokens == 534)
+        #expect(latest.reasoningSamples.map(\.reasoningOutputTokens) == [500, 16])
+        #expect(latest.reasoningSamples.map(\.observedAt) == [
+            date("2026-07-09T00:00:01.000Z"),
+            date("2026-07-09T00:00:02.000Z"),
+        ])
         #expect(latest.lastAgentMessage == "final answer")
     }
 
@@ -53,5 +58,11 @@ struct RolloutParserTests {
         #expect(parsed.turns[0].lastAgentMessage == "draft")
         #expect(parsed.turns[1].status == .aborted)
         #expect(parsed.latestTurn?.turnId == "turn-2")
+    }
+
+    private func date(_ text: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: text)!
     }
 }

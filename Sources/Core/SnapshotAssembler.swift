@@ -158,7 +158,8 @@ public enum SnapshotAssembler {
                         tokenUsage: turn.tokenUsage,
                         monitorState: evaluateMonitorState(latestTurn: turn, suspiciousModulo: suspiciousModulo),
                         signalState: .unknown,
-                        assistantPreview: turn.lastAgentMessage
+                        assistantPreview: turn.lastAgentMessage,
+                        reasoningSamples: turn.reasoningSamples
                     )
                 }
             }

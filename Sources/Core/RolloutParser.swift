@@ -17,6 +17,7 @@ public actor RolloutParser {
         var usage: TurnUsage
         var lastTokenUsage: TurnUsage
         var totalTokenUsage: TurnUsage?
+        var reasoningSamples: [TurnReasoningSample]
         var lastAgentMessage: String?
 
         func freeze() -> LatestTurn {
@@ -32,7 +33,8 @@ public actor RolloutParser {
                 tokenUsage: TurnTokenUsageSnapshot(
                     last: lastTokenUsage,
                     total: totalTokenUsage ?? usage
-                )
+                ),
+                reasoningSamples: reasoningSamples
             )
         }
     }
@@ -103,6 +105,7 @@ public actor RolloutParser {
                     usage: .zero,
                     lastTokenUsage: .zero,
                     totalTokenUsage: nil,
+                    reasoningSamples: [],
                     lastAgentMessage: nil
                 )
 
@@ -116,7 +119,8 @@ public actor RolloutParser {
                 case "token_count":
                     if let info = payload["info"] as? [String: Any],
                        var turn = currentTurn {
-                        if let lastUsage = normalizeOptionalUsage(info["last_token_usage"]) {
+                        let lastUsage = normalizeOptionalUsage(info["last_token_usage"])
+                        if let lastUsage {
                             turn.usage.add(lastUsage)
                             turn.lastTokenUsage = lastUsage
                             if info["total_token_usage"] == nil {
@@ -125,6 +129,17 @@ public actor RolloutParser {
                         }
                         if let totalUsage = normalizeOptionalUsage(info["total_token_usage"]) {
                             turn.totalTokenUsage = totalUsage
+                        }
+                        if let lastUsage, let timestamp {
+                            turn.reasoningSamples.append(
+                                TurnReasoningSample(
+                                    observedAt: timestamp,
+                                    tokenUsage: TurnTokenUsageSnapshot(
+                                        last: lastUsage,
+                                        total: turn.totalTokenUsage ?? turn.usage
+                                    )
+                                )
+                            )
                         }
                         currentTurn = turn
                     }

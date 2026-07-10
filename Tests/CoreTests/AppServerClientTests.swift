@@ -5,6 +5,20 @@ import Testing
 @Suite(.serialized)
 struct AppServerClientTests {
     @Test
+    func launchConfigurationUsesExplicitExecutableOverride() {
+        let configuration = AppServerLaunchConfiguration.codexAppServer(
+            processEnvironment: [
+                "HOME": "/tmp/codex-pulse-test-home",
+                "PATH": "/usr/bin",
+                "CODEX_APP_SERVER_EXECUTABLE": "/bin/echo",
+            ]
+        )
+
+        #expect(configuration.executableURL.path == "/bin/echo")
+        #expect(configuration.arguments == ["app-server"])
+    }
+
+    @Test
     func listsThreads() async throws {
         try await withStubServer(scenario: "success") { configuration in
             try await withClient(configuration: configuration) { client in
@@ -28,6 +42,20 @@ struct AppServerClientTests {
     }
 
     @Test
+    func reconstructsLargeThreadListResponsesAcrossPipeChunks() async throws {
+        try await withStubServer(scenario: "large_response") { configuration in
+            try await withClient(
+                configuration: configuration,
+                requestTimeout: .seconds(2)
+            ) { client in
+                let threads = try await client.listThreads(limit: 1, cwdFilters: [])
+                #expect(threads.first?.id == "thread-large")
+                #expect(threads.first?.preview.count == 524_288)
+            }
+        }
+    }
+
+    @Test
     func timesOutRequests() async throws {
         try await withStubServer(scenario: "timeout") { configuration in
             try await withClient(
@@ -39,6 +67,26 @@ struct AppServerClientTests {
                 await #expect(throws: AppServerClientError.requestTimedOut(method: "thread/list")) {
                     _ = try await client.listThreads(limit: 1, cwdFilters: [])
                 }
+            }
+        }
+    }
+
+    @Test
+    func aSingleTimeoutKeepsTheHealthyProcessAvailable() async throws {
+        try await withStubServer(scenario: "timeout_once_same_process") { configuration in
+            try await withClient(
+                configuration: configuration,
+                requestTimeout: .milliseconds(30),
+                baseBackoff: .milliseconds(500),
+                maxBackoff: .milliseconds(500)
+            ) { client in
+                await #expect(throws: AppServerClientError.requestTimedOut(method: "thread/list")) {
+                    _ = try await client.listThreads(limit: 1, cwdFilters: [])
+                }
+
+                try await Task.sleep(for: .milliseconds(100))
+                let threads = try await client.listThreads(limit: 1, cwdFilters: [])
+                #expect(threads.map(\.id) == ["thread-1"])
             }
         }
     }
@@ -92,6 +140,26 @@ struct AppServerClientTests {
                 #expect(update.turnId == "turn-1")
                 #expect(update.tokenUsage.last.reasoningOutputTokens == 177)
                 #expect(update.tokenUsage.total.reasoningOutputTokens == 936)
+            }
+        }
+    }
+
+    @Test
+    func coalescesOverlappingSubscriptionReconciliations() async throws {
+        try await withStubServer(scenario: "slow_resume_stream") { configuration in
+            try await withClient(configuration: configuration) { client in
+                let sink = EventSink()
+                await client.setEventHandler { event in
+                    await sink.append(event)
+                }
+
+                async let first: Void = client.syncSubscriptions(threadIDs: ["thread-1"])
+                try await Task.sleep(for: .milliseconds(10))
+                async let second: Void = client.syncSubscriptions(threadIDs: ["thread-1"])
+                _ = await (first, second)
+
+                try await Task.sleep(for: .milliseconds(40))
+                #expect(await sink.snapshot().count == 1)
             }
         }
     }
@@ -160,6 +228,7 @@ struct AppServerClientTests {
             run_count = int(state_file.read_text() or "0")
         run_count += 1
         state_file.write_text(str(run_count))
+        list_count = 0
 
         def send(message_id, result=None, error=None):
             payload = {"id": message_id}
@@ -190,8 +259,10 @@ struct AppServerClientTests {
                 continue
 
             if method == "thread/resume":
+                if scenario == "slow_resume_stream":
+                    time.sleep(0.08)
                 send(message["id"], {})
-                if scenario == "resume_stream":
+                if scenario in ("resume_stream", "slow_resume_stream"):
                     notify("thread/tokenUsage/updated", {
                         "threadId": "thread-1",
                         "turnId": "turn-1",
@@ -228,6 +299,11 @@ struct AppServerClientTests {
                 time.sleep(60)
                 continue
 
+            if scenario == "timeout_once_same_process":
+                list_count += 1
+                if list_count == 1:
+                    time.sleep(0.08)
+
             if scenario == "disconnect_once" and run_count == 1:
                 sys.exit(0)
 
@@ -262,6 +338,21 @@ struct AppServerClientTests {
 
             if scenario == "empty":
                 send(message["id"], {"data": [], "nextCursor": None})
+                continue
+
+            if scenario == "large_response":
+                send(message["id"], {
+                    "data": [{
+                        "id": "thread-large",
+                        "name": "Large",
+                        "preview": "x" * 524288,
+                        "source": "cli",
+                        "cwd": "/tmp/project-large",
+                        "path": "/tmp/large.jsonl",
+                        "updatedAt": 1783555201
+                    }],
+                    "nextCursor": None
+                })
                 continue
 
             send(message["id"], {

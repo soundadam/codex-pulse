@@ -1,3 +1,4 @@
+import AppKit
 import Charts
 import Core
 import SwiftUI
@@ -6,106 +7,88 @@ struct InspectorRootView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        ZStack {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 12)
+                .frame(height: 48)
+
+            Divider()
+                .opacity(0.55)
+
+            toolbar
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+
+            if let message = model.errorBannerMessage {
+                CompactErrorBanner(message: message)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
+
+            timelineContent
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+        }
+        .frame(width: 760, height: 520, alignment: .topLeading)
+        .background(
             LinearGradient(
                 colors: [
                     Color(nsColor: .windowBackgroundColor),
-                    PulsePalette.accent.opacity(0.055),
+                    PulsePalette.accent.opacity(0.045),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                    .padding(.horizontal, 18)
-                    .padding(.top, 16)
-                    .padding(.bottom, 14)
-
-                Divider()
-                    .opacity(0.6)
-
-                controlBar
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        if let errorBannerMessage = model.errorBannerMessage {
-                            ErrorBannerView(message: errorBannerMessage)
-                        }
-
-                        switch model.selectedTab {
-                        case .allTurns:
-                            allTurnsContent
-                        case .threadDetail:
-                            threadDetailContent
-                        }
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 18)
-                }
-            }
-        }
-        .frame(
-            minWidth: 840,
-            idealWidth: 840,
-            maxWidth: 840,
-            minHeight: 560,
-            idealHeight: 620,
-            maxHeight: 680,
-            alignment: .topLeading
         )
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(
                         LinearGradient(
-                            colors: [PulsePalette.accent, PulsePalette.accent.opacity(0.68)],
+                            colors: [PulsePalette.accent, PulsePalette.accent.opacity(0.72)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                 Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
             }
-            .frame(width: 38, height: 38)
-            .shadow(color: PulsePalette.accent.opacity(0.24), radius: 8, y: 3)
+            .frame(width: 30, height: 30)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("Codex Pulse")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                HStack(spacing: 6) {
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                HStack(spacing: 5) {
                     Circle()
                         .fill(connectionTint)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 5, height: 5)
                     Text(connectionLabel)
                     Text("·")
                     Text(lastRefreshLabel)
                 }
-                .font(.caption)
+                .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(.secondary)
             }
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
 
-            HeaderMetric(
+            CompactHeaderMetric(
                 value: model.invalidTimelineTurnCount,
-                label: "Invalid",
+                label: "invalid",
                 tint: PulsePalette.invalid
             )
-            HeaderMetric(
+            CompactHeaderMetric(
                 value: model.runningThreadCount,
-                label: "Running",
+                label: "running",
                 tint: PulsePalette.running
             )
-            HeaderMetric(
+            CompactHeaderMetric(
                 value: model.observedTimelineTurnCount,
-                label: "Observed",
+                label: "observed",
                 tint: PulsePalette.valid
             )
 
@@ -113,9 +96,9 @@ struct InspectorRootView: View {
                 model.refreshNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 12, weight: .bold))
                     .rotationEffect(model.isRefreshing ? .degrees(180) : .zero)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 28, height: 28)
                     .background(Circle().fill(PulsePalette.surface))
             }
             .buttonStyle(.plain)
@@ -126,26 +109,15 @@ struct InspectorRootView: View {
         }
     }
 
-    private var controlBar: some View {
-        HStack(spacing: 12) {
-            Picker("View", selection: Binding(
-                get: { model.selectedTab },
-                set: { model.setSelectedTab($0) }
-            )) {
-                Label("Timeline", systemImage: "chart.xyaxis.line")
-                    .tag(TimelineTab.allTurns)
-                Label("Threads", systemImage: "rectangle.split.3x1")
-                    .tag(TimelineTab.threadDetail)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 230)
-
-            HStack(spacing: 8) {
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                TextField("Search projects, threads, or turns", text: $model.searchQuery)
+                TextField("Search projects or threads", text: $model.searchQuery)
                     .textFieldStyle(.plain)
+                    .font(.caption)
                 if model.searchQuery.isEmpty == false {
                     Button {
                         model.searchQuery = ""
@@ -157,145 +129,136 @@ struct InspectorRootView: View {
                     .accessibilityLabel("Clear search")
                 }
             }
-            .padding(.horizontal, 11)
-            .frame(height: 30)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
             .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(PulsePalette.surface)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.07))
             }
+
+            Picker(
+                "Time window",
+                selection: Binding(
+                    get: { model.selectedTimelineWindow },
+                    set: { model.setTimelineWindow($0) }
+                )
+            ) {
+                ForEach(TimelineWindow.allCases) { window in
+                    Text(window.shortLabel)
+                        .tag(window)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 166)
         }
     }
 
     @ViewBuilder
-    private var allTurnsContent: some View {
-        if model.recentReasoningSessions.isEmpty {
+    private var timelineContent: some View {
+        if model.timelineSeries.isEmpty {
             ContentUnavailableView(
-                model.searchQuery.isEmpty ? "No timeline items yet" : "No matching turns",
-                systemImage: "waveform.path.ecg",
+                model.searchQuery.isEmpty ? "No turns in this window" : "No matching threads",
+                systemImage: "chart.xyaxis.line",
                 description: Text(model.searchQuery.isEmpty
-                    ? "Codex Pulse will chart live samples and completed turns here."
+                    ? "Live and completed turns will appear on the timeline."
                     : "Try a project name, thread title, model, or preview text.")
             )
-            .frame(maxWidth: .infinity, minHeight: 330)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .pulseSurface()
         } else {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionHeading(
-                    eyebrow: "LAST HOUR",
-                    title: "Reasoning stream",
-                    trailing: "\(model.recentReasoningSessions.count) samples"
-                )
-                HStack(spacing: 14) {
-                    SignalLegend(label: "Invalid", tint: PulsePalette.invalid)
-                    SignalLegend(label: "Observed", tint: PulsePalette.valid)
-                    SignalLegend(label: "No live sample", tint: PulsePalette.unknown)
+            VStack(alignment: .leading, spacing: 6) {
+                chartHeading
+
+                MultiThreadTimelineChart(model: model)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: chartMinimumHeight,
+                        maxHeight: .infinity
+                    )
+                    .layoutPriority(1)
+
+                if let point = model.selectedTimelinePoint {
+                    ReasoningTurnInspector(
+                        point: point,
+                        openRollout: model.openSelectedRollout
+                    )
+                    .frame(height: 126)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                TimelineScroller(
-                    sessions: model.recentReasoningSessions,
-                    selectedKey: model.selectedCompletedSession?.key,
-                    onSelect: model.selectSession
-                )
             }
-            .padding(14)
+            .padding(10)
             .pulseSurface()
-
-            if let group = model.selectedTimelineThreadGroup,
-               let turn = model.selectedTimelineTurnDetail {
-                ThreadTurnStrip(
-                    group: group,
-                    turns: model.selectedTimelineTurns,
-                    selectedTurnKey: turn.key,
-                    onSelect: model.selectTurn
-                )
-
-                TurnDetailCard(
-                    group: group,
-                    turn: turn,
-                    samples: model.selectedTimelineTurnSamples,
-                    openRollout: model.openSelectedRollout
-                )
-            } else if let session = model.selectedCompletedSession {
-                SessionDetailCard(
-                    session: session,
-                    openRollout: model.openSelectedRollout
-                )
-            }
+            .animation(.easeOut(duration: 0.16), value: model.selectedSessionKey)
         }
     }
 
-    @ViewBuilder
-    private var threadDetailContent: some View {
-        if model.threadDetailThreads.isEmpty {
-            ContentUnavailableView(
-                model.searchQuery.isEmpty ? "No threads yet" : "No matching threads",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text(model.searchQuery.isEmpty
-                    ? "Recent Codex threads will appear as soon as they are discovered."
-                    : "Try searching by project path, thread title, or assistant preview.")
-            )
-            .frame(maxWidth: .infinity, minHeight: 380)
-            .pulseSurface()
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionHeading(
-                    eyebrow: "INSPECT",
-                    title: "Thread explorer",
-                    trailing: "\(model.threadDetailThreads.count) recent"
-                )
+    private var chartHeading: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("MULTI-THREAD · \(model.selectedTimelineWindow.shortLabel.uppercased())")
+                    .font(.system(size: 9, weight: .bold))
+                    .tracking(0.8)
+                    .foregroundStyle(PulsePalette.accent)
+                Text("Turn total (L) · model call (R)")
+                    .font(.caption.weight(.semibold))
+            }
 
-                HStack(alignment: .top, spacing: 12) {
-                    ThreadListColumn(
-                        threads: model.threadDetailThreads,
-                        selectedThreadID: model.selectedThreadID,
-                        onSelect: model.selectThread
-                    )
-                    .frame(width: 210)
+            Spacer()
 
-                    TurnListColumn(
-                        turns: model.selectedThreadTurns,
-                        selectedTurnKey: model.selectedTurnDetail?.key,
-                        onSelect: model.selectTurn
-                    )
-                    .frame(width: 170)
-
-                    if let group = model.selectedThreadTurnGroup,
-                       let turn = model.selectedTurnDetail {
-                        TurnDetailCard(
-                            group: group,
-                            turn: turn,
-                            samples: model.selectedTurnSamples,
-                            openRollout: model.openSelectedRollout
-                        )
-                    } else {
-                        ContentUnavailableView(
-                            "No turns for selected thread",
-                            systemImage: "list.bullet.rectangle",
-                            description: Text("Select another thread or wait for a turn to complete.")
-                        )
-                        .frame(maxWidth: .infinity, minHeight: 300)
-                        .pulseSurface()
-                    }
+            if let selectedSeries = model.selectedThreadSeries {
+                HStack(spacing: 6) {
+                    Capsule(style: .continuous)
+                        .fill(seriesColor(selectedSeries))
+                        .frame(width: 20, height: 4)
+                    Text(selectedSeries.shortLabel)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                .font(.system(size: 9.5, weight: .bold))
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(seriesColor(selectedSeries).opacity(0.16))
+                )
+            } else {
+                Text("\(model.timelinePoints.count) turns · click line to focus · double-click to reset")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
+        .frame(height: 26)
+    }
+
+    private func seriesColor(_ series: ThreadTimelineSeries) -> Color {
+        PulsePalette.seriesColors[series.colorIndex % PulsePalette.seriesColors.count]
+    }
+
+    private var chartMinimumHeight: CGFloat {
+        if model.selectedTimelinePoint != nil {
+            return model.errorBannerMessage == nil ? 220 : 180
+        }
+        return model.errorBannerMessage == nil ? 260 : 220
     }
 
     private var lastRefreshLabel: String {
         guard let lastRefreshAt = model.lastRefreshAt else {
-            return "Waiting for first sync"
+            return "waiting"
         }
-        return "Updated \(lastRefreshAt.formatted(date: .omitted, time: .shortened))"
+        return lastRefreshAt.formatted(date: .omitted, time: .shortened)
     }
 
     private var connectionLabel: String {
         if model.errorMessage != nil {
-            return "Disconnected"
+            return "disconnected"
         }
-        return model.isRefreshing ? "Syncing" : "Live"
+        return model.isRefreshing ? "syncing" : "live"
     }
 
     private var connectionTint: Color {
@@ -306,712 +269,636 @@ struct InspectorRootView: View {
     }
 }
 
-private struct TimelineScroller: View {
-    let sessions: [CompletedSession]
-    let selectedKey: String?
-    let onSelect: (String?) -> Void
-    private let nodeSpacing: CGFloat = 12
-    private let sidePadding: CGFloat = 24
+private struct MultiThreadTimelineChart: View {
+    @Bindable var model: AppModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 12) {
-                    ReasoningCurveChart(
-                        sessions: sessions,
-                        selectedKey: selectedKey
-                    )
-                    .frame(width: contentWidth, height: 120)
+        let scale = dualScale
 
-                    ZStack(alignment: .center) {
-                        Capsule(style: .continuous)
-                            .fill(Color.secondary.opacity(0.18))
-                            .frame(height: 2)
-                            .padding(.horizontal, 34)
+        VStack(alignment: .leading, spacing: 6) {
+            ThreadChartLegend(
+                series: model.timelineSeries,
+                selectedThreadID: model.selectedThreadID,
+                selectThread: model.selectThreadLine
+            )
 
-                        HStack(alignment: .top, spacing: nodeSpacing) {
-                            ForEach(sessions) { session in
-                                Button {
-                                    onSelect(session.key)
-                                } label: {
-                                    TimelineNode(
-                                        session: session,
-                                        isSelected: session.key == selectedKey
+            Chart {
+                // Layer 1: per-call traces. The Turn ID is the series key, so
+                // these lines can never bridge two Turns.
+                ForEach(model.timelineSeries) { series in
+                    ForEach(series.points) { point in
+                        if point.session.reasoningSamples.count > 1 {
+                            ForEach(point.displayedReasoningSamples) { sample in
+                                LineMark(
+                                    x: .value("Sample time", sample.timestamp),
+                                    y: .value(
+                                        "Call reasoning axis",
+                                        scale.callPosition(for: sample.reasoningTokens)
+                                    ),
+                                    series: .value("Turn call trace", point.callTraceSeriesID)
+                                )
+                                .interpolationMethod(.monotone)
+                                .lineStyle(
+                                    StrokeStyle(
+                                        lineWidth: sampleLineWidth(for: series.threadID),
+                                        lineCap: .round,
+                                        lineJoin: .round
                                     )
-                                }
-                                .buttonStyle(.plain)
-                                .frame(width: nodeWidth)
-                                .id(session.key)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, sidePadding)
-                .frame(width: contentWidth, alignment: .leading)
-            }
-            .frame(height: 220)
-            .onAppear {
-                scrollToLatest(with: proxy)
-            }
-            .onChange(of: selectedKey) { _, _ in
-                scrollToLatest(with: proxy)
-            }
-            .onChange(of: sessions.map(\.key)) { _, _ in
-                scrollToLatest(with: proxy)
-            }
-        }
-    }
+                                )
+                                .foregroundStyle(
+                                    seriesColor(for: series).opacity(sampleOpacity(for: series.threadID))
+                                )
 
-    private var nodeWidth: CGFloat { 76 }
-
-    private var contentWidth: CGFloat {
-        let nodesWidth = CGFloat(sessions.count) * nodeWidth
-        let spacingWidth = CGFloat(max(0, sessions.count - 1)) * nodeSpacing
-        let paddedWidth = nodesWidth + spacingWidth + sidePadding * 2
-        return max(paddedWidth, 700)
-    }
-
-    private func scrollToLatest(with proxy: ScrollViewProxy) {
-        let targetKey = selectedKey ?? sessions.last?.key
-        guard let targetKey else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo(targetKey, anchor: .trailing)
-            }
-        }
-    }
-}
-
-private struct ReasoningCurveChart: View {
-    let sessions: [CompletedSession]
-    let selectedKey: String?
-
-    var body: some View {
-        Chart(Array(sessions.enumerated()), id: \.element.id) { index, session in
-            AreaMark(
-                x: .value("Index", index),
-                y: .value("Reasoning", session.timelineReasoningTokens)
-            )
-            .interpolationMethod(.linear)
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [
-                        signalColor(for: session.signalState).opacity(0.16),
-                        .clear,
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-
-            LineMark(
-                x: .value("Index", index),
-                y: .value("Reasoning", session.timelineReasoningTokens)
-            )
-            .interpolationMethod(.linear)
-            .lineStyle(.init(lineWidth: session.key == selectedKey ? 3 : 2, lineCap: .round, lineJoin: .round))
-            .foregroundStyle(signalColor(for: session.signalState))
-
-            PointMark(
-                x: .value("Index", index),
-                y: .value("Reasoning", session.timelineReasoningTokens)
-            )
-            .symbolSize(session.key == selectedKey ? 90 : 55)
-            .foregroundStyle(signalColor(for: session.signalState))
-        }
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(.secondary.opacity(0.18))
-                AxisValueLabel {
-                    if let number = value.as(Int.self) {
-                        Text(numberText(number))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .chartLegend(.hidden)
-    }
-}
-
-private struct TimelineNode: View {
-    let session: CompletedSession
-    let isSelected: Bool
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Text(numberText(session.timelineReasoningTokens))
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-                .foregroundStyle(signalColor(for: session.signalState))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            ZStack {
-                Circle()
-                    .fill(signalColor(for: session.signalState))
-                    .frame(width: isSelected ? 20 : 16, height: isSelected ? 20 : 16)
-                Circle()
-                    .strokeBorder(isSelected ? Color.primary : signalColor(for: session.signalState).opacity(0.45), lineWidth: isSelected ? 3 : 2)
-                    .frame(width: isSelected ? 24 : 20, height: isSelected ? 24 : 20)
-            }
-
-            VStack(spacing: 2) {
-                Text(formatDate(session.completedAt))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(session.projectName)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-    }
-}
-
-private struct SessionDetailCard: View {
-    let session: CompletedSession
-    let openRollout: () -> Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle()
-                    .fill(signalColor(for: session.signalState))
-                    .frame(width: 10, height: 10)
-
-                Text(session.projectName)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                Text(statusText)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(signalColor(for: session.signalState))
-            }
-
-            Text(session.threadTitle)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-
-            Text(session.subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            HStack(spacing: 10) {
-                MetricChip(label: "Last", value: numberText(session.tokenUsage.last.reasoningOutputTokens), tint: signalColor(for: session.signalState))
-                MetricChip(label: "Total", value: numberText(session.tokenUsage.total.reasoningOutputTokens), tint: .primary)
-            }
-
-            HStack(spacing: 10) {
-                Text(session.completedAt?.formatted(date: .omitted, time: .shortened) ?? "-")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Button("Open Rollout") {
-                    _ = openRollout()
-                }
-                .buttonStyle(.link)
-                .disabled(session.rolloutPath == nil)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pulseSurface()
-    }
-
-    private var statusText: String {
-        switch session.signalState {
-        case .invalid:
-            return "Invalid signal"
-        case .valid:
-            return session.monitorState == .running ? "Live turn" : "Observed turn"
-        case .unknown:
-            return "No live samples"
-        }
-    }
-}
-
-private struct ThreadTurnStrip: View {
-    let group: ThreadTurnGroup
-    let turns: [TurnDetailItem]
-    let selectedTurnKey: String?
-    let onSelect: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(group.projectName)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                Text(group.threadTitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(turns) { turn in
-                        Button {
-                            onSelect(turn.key)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(signalColor(for: turn.signalState))
-                                        .frame(width: 7, height: 7)
-                                    Text(numberText(turn.lastUsage.reasoningOutputTokens))
-                                        .font(.system(.caption, design: .monospaced).weight(.semibold))
-                                        .foregroundStyle(signalColor(for: turn.signalState))
-                                        .lineLimit(1)
-                                }
-
-                                Text(formatDate(turn.completedAt ?? turn.startedAt))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-
-                                Text(turn.displayTurnID)
-                                    .font(.caption2)
-                                    .foregroundStyle(turn.key == selectedTurnKey ? .primary : .secondary)
-                                    .lineLimit(1)
-                            }
-                            .padding(10)
-                            .frame(width: 112, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(turn.key == selectedTurnKey ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .pulseSurface()
-    }
-}
-
-private struct ThreadListColumn: View {
-    let threads: [MonitorThread]
-    let selectedThreadID: String?
-    let onSelect: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Threads")
-                .font(.subheadline.weight(.semibold))
-
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(threads) { thread in
-                        Button {
-                            onSelect(thread.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(thread.monitorState == .running ? Color.orange : Color.secondary)
-                                        .frame(width: 7, height: 7)
-                                    Text(thread.threadTitle)
-                                        .font(.caption.weight(.semibold))
-                                        .lineLimit(1)
-                                }
-                                Text(thread.projectName)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(thread.id == selectedThreadID ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .pulseSurface()
-    }
-}
-
-private struct TurnListColumn: View {
-    let turns: [TurnDetailItem]
-    let selectedTurnKey: String?
-    let onSelect: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Turns")
-                .font(.subheadline.weight(.semibold))
-
-            if turns.isEmpty {
-                Text("No turns for this thread yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(turns) { turn in
-                            Button {
-                                onSelect(turn.key)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 6) {
-                                        Circle()
-                                            .fill(signalColor(for: turn.signalState))
-                                            .frame(width: 8, height: 8)
-                                        Text(turn.displayTurnID)
-                                            .font(.caption.weight(.semibold))
-                                            .lineLimit(1)
-                                    }
-                                    Text(formatDate(turn.completedAt ?? turn.startedAt))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(turn.key == selectedTurnKey ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
+                                PointMark(
+                                    x: .value("Sample time", sample.timestamp),
+                                    y: .value(
+                                        "Call reasoning axis",
+                                        scale.callPosition(for: sample.reasoningTokens)
+                                    )
+                                )
+                                .symbolSize(model.selectedThreadID == series.threadID ? 8 : 4)
+                                .foregroundStyle(
+                                    seriesColor(for: series).opacity(samplePointOpacity(for: series.threadID))
                                 )
                             }
-                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                // Layer 2: selected Thread glow, aligned only to Turn-total nodes.
+                ForEach(model.timelineSeries) { series in
+                    if model.selectedThreadID == series.threadID {
+                        ForEach(series.points) { point in
+                            LineMark(
+                                x: .value("Turn time", point.timestamp),
+                                y: .value(
+                                    "Turn total axis",
+                                    scale.turnPosition(for: point.turnTotalReasoningTokens)
+                                ),
+                                series: .value("Selected Turn-total Thread", series.threadID)
+                            )
+                            .interpolationMethod(.monotone)
+                            .lineStyle(
+                                StrokeStyle(
+                                    lineWidth: 12,
+                                    lineCap: .round,
+                                    lineJoin: .round
+                                )
+                            )
+                            .foregroundStyle(seriesColor(for: series).opacity(0.26))
+                        }
+                    }
+                }
+
+                // Layer 3: cross-Turn backbone. Only large Turn-total nodes feed it.
+                ForEach(model.timelineSeries) { series in
+                    ForEach(series.points) { point in
+                        LineMark(
+                            x: .value("Turn time", point.timestamp),
+                            y: .value(
+                                "Turn total axis",
+                                scale.turnPosition(for: point.turnTotalReasoningTokens)
+                            ),
+                            series: .value("Turn-total Thread", series.threadID)
+                        )
+                        .interpolationMethod(.monotone)
+                        .lineStyle(
+                            StrokeStyle(
+                                lineWidth: lineWidth(for: series.threadID),
+                                lineCap: .round,
+                                lineJoin: .round
+                            )
+                        )
+                        .foregroundStyle(
+                            seriesColor(for: series).opacity(lineOpacity(for: series.threadID))
+                        )
+                    }
+                }
+
+                // Layer 4: interactive Turn-total nodes stay above every call trace.
+                ForEach(model.timelineSeries) { series in
+                    ForEach(series.points) { point in
+                        PointMark(
+                            x: .value("Turn time", point.timestamp),
+                            y: .value(
+                                "Turn total axis",
+                                scale.turnPosition(for: point.turnTotalReasoningTokens)
+                            )
+                        )
+                        .foregroundStyle(.clear)
+                        .symbol {
+                            TimelinePointSymbol(
+                                point: point,
+                                seriesColor: seriesColor(for: series),
+                                isSelected: point.id == model.selectedSessionKey,
+                                opacity: pointOpacity(for: series.threadID)
+                            )
                         }
                     }
                 }
             }
+            .chartXScale(domain: model.timelineDomain)
+            .chartYScale(domain: 0.0...1.0)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(.secondary.opacity(0.10))
+                    AxisValueLabel {
+                        if let date = value.as(Date.self) {
+                            Text(date.formatted(date: .omitted, time: .shortened))
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: scale.turnTickPositions) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(.secondary.opacity(0.14))
+                    AxisTick(stroke: StrokeStyle(lineWidth: 0.7))
+                        .foregroundStyle(.secondary.opacity(0.45))
+                    AxisValueLabel {
+                        if let position = value.as(Double.self) {
+                            Text(numberText(scale.turnLabel(at: position)))
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                AxisMarks(position: .trailing, values: scale.callTickPositions) { value in
+                    AxisTick(stroke: StrokeStyle(lineWidth: 0.7))
+                        .foregroundStyle(PulsePalette.accent.opacity(0.55))
+                    AxisValueLabel {
+                        if let position = value.as(Double.self) {
+                            Text(numberText(scale.callLabel(at: position)))
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(PulsePalette.accent.opacity(0.82))
+                        }
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .chartPlotStyle { plotArea in
+                plotArea.clipped()
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    if let plotAnchor = proxy.plotFrame {
+                        let plotFrame = geometry[plotAnchor]
+                        ChartClickCapture { location, clickCount in
+                            if clickCount >= 2 {
+                                model.resetTimelineFocus()
+                            } else {
+                                handleSingleTap(location: location, proxy: proxy)
+                            }
+                        }
+                            .frame(width: plotFrame.width, height: plotFrame.height)
+                            .position(x: plotFrame.midX, y: plotFrame.midY)
+                    }
+                }
+            }
+
         }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .pulseSurface()
+        .accessibilityLabel("Reasoning timeline grouped by thread")
+        .animation(.easeOut(duration: 0.16), value: model.selectedThreadID)
+    }
+
+    private var dualScale: TimelineDualLogScale {
+        TimelineDualLogScale(
+            turnValues: model.timelinePoints.map(\.turnTotalReasoningTokens),
+            callValues: model.timelinePoints.flatMap { point in
+                point.reasoningSamples.map(\.reasoningTokens)
+            }
+        )
+    }
+
+    private func handleSingleTap(
+        location: CGPoint,
+        proxy: ChartProxy
+    ) {
+        let scale = dualScale
+        let renderedSeries = model.timelineSeries.map { series in
+            TimelineRenderedSeries(
+                threadID: series.threadID,
+                points: series.points.compactMap { point in
+                    guard let x = proxy.position(forX: point.timestamp),
+                          let y = proxy.position(
+                            forY: scale.turnPosition(for: point.turnTotalReasoningTokens)
+                          ) else {
+                        return nil
+                    }
+                    return TimelineRenderedPoint(
+                        pointID: point.id,
+                        position: CGPoint(x: x, y: y)
+                    )
+                },
+                lineRuns: series.points.compactMap { point in
+                    let positions = point.displayedReasoningSamples.compactMap { sample -> CGPoint? in
+                        guard let x = proxy.position(forX: sample.timestamp),
+                              let y = proxy.position(
+                                forY: scale.callPosition(for: sample.reasoningTokens)
+                              ) else {
+                            return nil
+                        }
+                        return CGPoint(x: x, y: y)
+                    }
+                    return positions.count > 1 ? positions : nil
+                }
+            )
+        }
+
+        switch TimelineHitTester.hitTest(
+            location: location,
+            series: renderedSeries,
+            nodeRadius: 18,
+            lineTolerance: 15
+        ) {
+        case let .point(pointID):
+            model.selectTimelinePoint(pointID)
+        case let .thread(threadID):
+            model.selectThreadLine(threadID)
+        case nil:
+            break
+        }
+    }
+
+    private func seriesColor(for series: ThreadTimelineSeries) -> Color {
+        PulsePalette.seriesColors[series.colorIndex % PulsePalette.seriesColors.count]
+    }
+
+    private func lineWidth(for threadID: String) -> CGFloat {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 3.4
+        }
+        return selectedThreadID == threadID ? 5.6 : 1.2
+    }
+
+    private func lineOpacity(for threadID: String) -> Double {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 0.90
+        }
+        return selectedThreadID == threadID ? 1 : 0.10
+    }
+
+    private func pointOpacity(for threadID: String) -> Double {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 0.78
+        }
+        return selectedThreadID == threadID ? 0.94 : 0.14
+    }
+
+    private func sampleLineWidth(for threadID: String) -> CGFloat {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 0.8
+        }
+        return selectedThreadID == threadID ? 1.35 : 0.5
+    }
+
+    private func sampleOpacity(for threadID: String) -> Double {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 0.26
+        }
+        return selectedThreadID == threadID ? 0.56 : 0.045
+    }
+
+    private func samplePointOpacity(for threadID: String) -> Double {
+        guard let selectedThreadID = model.selectedThreadID else {
+            return 0.30
+        }
+        return selectedThreadID == threadID ? 0.62 : 0.055
     }
 }
 
-private struct TurnDetailCard: View {
-    let group: ThreadTurnGroup
-    let turn: TurnDetailItem
-    let samples: [LiveTurnSample]
-    let openRollout: () -> Bool
+private struct ThreadChartLegend: View {
+    let series: [ThreadTimelineSeries]
+    let selectedThreadID: String?
+    let selectThread: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        ScrollView(.horizontal, showsIndicators: series.count > 3) {
+            LazyHStack(spacing: 5) {
+                ForEach(series) { item in
+                    Button {
+                        selectThread(item.threadID)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Capsule(style: .continuous)
+                                .fill(seriesColor(item))
+                                .frame(width: 20, height: selectedThreadID == item.threadID ? 4 : 3)
+                            Text(item.threadTitle)
+                                .font(.system(size: 9.5, weight: selectedThreadID == item.threadID ? .bold : .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 150)
+                        }
+                        .padding(.horizontal, 5)
+                        .frame(height: 20)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(selectedThreadID == item.threadID
+                                    ? seriesColor(item).opacity(0.22)
+                                    : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.shortLabel)
+                }
+            }
+        }
+        .contentMargins(.horizontal, 5, for: .scrollContent)
+        .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        }
+    }
+
+    private func seriesColor(_ item: ThreadTimelineSeries) -> Color {
+        PulsePalette.seriesColors[item.colorIndex % PulsePalette.seriesColors.count]
+    }
+}
+
+private struct ChartClickCapture: NSViewRepresentable {
+    let onClick: (CGPoint, Int) -> Void
+
+    func makeNSView(context: Context) -> ChartClickCaptureView {
+        let view = ChartClickCaptureView()
+        view.onClick = onClick
+        return view
+    }
+
+    func updateNSView(_ nsView: ChartClickCaptureView, context: Context) {
+        nsView.onClick = onClick
+    }
+}
+
+private final class ChartClickCaptureView: NSView {
+    var onClick: ((CGPoint, Int) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        onClick?(point, event.clickCount)
+    }
+}
+
+private struct TimelinePointSymbol: View {
+    let point: TimelinePoint
+    let seriesColor: Color
+    let isSelected: Bool
+    let opacity: Double
+
+    var body: some View {
+        ZStack {
+            if isSelected {
                 Circle()
-                    .fill(signalColor(for: turn.signalState))
-                    .frame(width: 10, height: 10)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(group.projectName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(group.threadTitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-
-                Text(turnStatusText)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(signalColor(for: turn.signalState))
+                    .fill(seriesColor.opacity(0.16))
+                    .padding(-5)
             }
 
-            Text(turn.displayTurnID)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-
-            if samples.isEmpty {
-                ContentUnavailableView(
-                    "No live samples captured",
-                    systemImage: "waveform.path.ecg",
-                    description: Text("Completed breakdown is available, but this turn was not fully observed in realtime.")
-                )
-                .frame(maxWidth: .infinity, minHeight: 140)
+            if point.session.signalState == .unknown {
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                Circle()
+                    .strokeBorder(PulsePalette.unknown, lineWidth: 1.5)
             } else {
-                TurnSampleChart(
-                    samples: samples,
-                    signalState: turn.signalState
-                )
-                .frame(height: 140)
+                Circle()
+                    .fill(point.session.signalState == .invalid ? PulsePalette.invalid : seriesColor)
             }
 
-            HStack(spacing: 10) {
-                UsageBreakdownCard(
-                    title: "Last Sample",
-                    usage: turn.lastUsage,
-                    tint: signalColor(for: turn.signalState)
-                )
-                UsageBreakdownCard(
-                    title: "Total",
-                    usage: turn.totalUsage,
-                    tint: .primary
-                )
+            if point.isRunning {
+                Circle()
+                    .strokeBorder(PulsePalette.running, lineWidth: 1.5)
+                    .padding(-2)
             }
 
-            MetadataStrip(
-                model: turn.model,
-                effort: turn.reasoningEffort,
-                startedAt: turn.startedAt,
-                completedAt: turn.completedAt,
-                contextWindow: samples.last?.modelContextWindow
-            )
-
-            if let assistantPreview = turn.assistantPreview,
-               assistantPreview.isEmpty == false {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Assistant Preview")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(assistantPreview)
-                        .font(.caption)
-                        .foregroundStyle(.primary)
-                        .lineLimit(4)
-                }
+            if isSelected {
+                Circle()
+                    .strokeBorder(Color.primary, lineWidth: 2)
+                    .padding(-3)
             }
+        }
+        .frame(width: isSelected ? 14 : 10, height: isSelected ? 14 : 10)
+        .opacity(opacity)
+        .shadow(color: isSelected ? Color.black.opacity(0.18) : .clear, radius: 3, y: 1)
+        .accessibilityLabel(accessibilityText)
+    }
 
-            HStack(spacing: 10) {
-                if let rolloutPath = turn.rolloutPath {
-                    Text(rolloutPath)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+    private var accessibilityText: String {
+        "\(point.session.threadTitle), \(numberText(point.turnTotalReasoningTokens)) total reasoning tokens"
+    }
+}
 
+private struct ReasoningTurnInspector: View {
+    let point: TimelinePoint
+    let openRollout: () -> Bool
+
+    private var samples: [TimelineSamplePoint] {
+        point.reasoningSamples
+    }
+
+    private var summary: ReasoningSampleSummary {
+        ReasoningSampleSummary(samples: samples)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                Text(point.session.projectName)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                Text("/")
+                    .foregroundStyle(.tertiary)
+                Text(point.session.threadTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
-
+                Text(point.session.model ?? "–")
+                    .font(.system(size: 9.5, weight: .semibold))
+                Text(point.session.reasoningEffort ?? "–")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
                 Button("Open Rollout") {
                     _ = openRollout()
                 }
                 .buttonStyle(.link)
-                .disabled(turn.rolloutPath == nil)
+                .font(.system(size: 9.5, weight: .semibold))
+                .disabled(point.session.rolloutPath == nil)
             }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pulseSurface()
-    }
 
-    private var turnStatusText: String {
-        switch turn.signalState {
-        case .invalid:
-            return "Invalid signal"
-        case .valid:
-            return turn.status == .running ? "Live turn" : "Observed turn"
-        case .unknown:
-            return "Unknown"
-        }
-    }
-}
-
-private struct TurnSampleChart: View {
-    let samples: [LiveTurnSample]
-    let signalState: TurnSignalState
-
-    var body: some View {
-        Chart(Array(samples.enumerated()), id: \.element.id) { index, sample in
-            LineMark(
-                x: .value("Index", index),
-                y: .value("Reasoning", sample.tokenUsage.last.reasoningOutputTokens)
-            )
-            .interpolationMethod(.linear)
-            .foregroundStyle(signalColor(for: signalState))
-            .lineStyle(.init(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-
-            PointMark(
-                x: .value("Index", index),
-                y: .value("Reasoning", sample.tokenUsage.last.reasoningOutputTokens)
-            )
-            .symbolSize(55)
-            .foregroundStyle(signalColor(for: signalState))
-        }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                AxisValueLabel {
-                    if let index = value.as(Int.self), samples.indices.contains(index) {
-                        Text(samples[index].observedAt.formatted(date: .omitted, time: .shortened))
-                            .font(.caption2)
-                    }
+            HStack(spacing: 12) {
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 2) {
+                    reasoningMetric("CALLS", summary.count.formatted())
+                    reasoningMetric("TURN TOTAL", numberText(point.turnTotalReasoningTokens))
+                    reasoningMetric(
+                        "RANGE",
+                        "\(numberText(summary.minimum))–\(numberText(summary.maximum))"
+                    )
+                    reasoningMetric("MEDIAN", numberText(summary.median))
+                    reasoningMetric("SPAN", durationText(summary.duration))
                 }
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(.secondary.opacity(0.18))
-                AxisValueLabel {
-                    if let number = value.as(Int.self) {
-                        Text(numberText(number))
-                            .font(.caption2)
+                .frame(width: 156, alignment: .leading)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("REASONING TOKENS OVER TIME · LOG")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+
+                    Chart(samples) { sample in
+                        LineMark(
+                            x: .value("Time", sample.timestamp),
+                            y: .value("Reasoning", sample.plotReasoningTokens)
+                        )
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(threadColor.opacity(0.78))
+
+                        PointMark(
+                            x: .value("Time", sample.timestamp),
+                            y: .value("Reasoning", sample.plotReasoningTokens)
+                        )
+                        .symbolSize(10)
+                        .foregroundStyle(threadColor.opacity(0.88))
                     }
+                    .chartYScale(
+                        domain: TimelineLogScale.domain(for: samples.map(\.reasoningTokens)),
+                        type: .log
+                    )
+                    .chartXAxis(.hidden)
+                    .chartYAxis(.hidden)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.025))
+                    )
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
-        }
-        .chartLegend(.hidden)
-    }
-}
 
-private struct UsageBreakdownCard: View {
-    let title: String
-    let usage: TurnUsage
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-                BreakdownRow(label: "Reasoning", value: usage.reasoningOutputTokens)
-                BreakdownRow(label: "Output", value: usage.outputTokens)
-                BreakdownRow(label: "Cached", value: usage.cachedInputTokens)
-                BreakdownRow(label: "Input", value: usage.inputTokens)
-                BreakdownRow(label: "Total", value: usage.totalTokens)
+            HStack(spacing: 7) {
+                Text(point.timestamp.formatted(date: .omitted, time: .shortened))
+                Text(point.session.turnId ?? "unknown turn")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Text("Large node = Turn · small nodes = model calls")
             }
-            .foregroundStyle(tint)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(tint.opacity(0.08))
-        )
-    }
-}
-
-private struct BreakdownRow: View {
-    let label: String
-    let value: Int
-
-    var body: some View {
-        GridRow {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(numberText(value))
-                .font(.system(.caption, design: .monospaced).weight(.semibold))
-        }
-    }
-}
-
-private struct MetadataStrip: View {
-    let model: String?
-    let effort: String?
-    let startedAt: Date?
-    let completedAt: Date?
-    let contextWindow: Int?
-
-    var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-            MetadataRow(label: "Model", value: model ?? "-")
-            MetadataRow(label: "Effort", value: effort ?? "-")
-            MetadataRow(label: "Started", value: formatDate(startedAt))
-            MetadataRow(label: "Completed", value: formatDate(completedAt))
-            MetadataRow(label: "Context", value: contextWindow.map(numberText) ?? "-")
-        }
-    }
-}
-
-private struct MetadataRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        GridRow {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption)
-                .lineLimit(1)
-        }
-    }
-}
-
-private struct MetricChip: View {
-    let label: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased())
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.title3, design: .monospaced).weight(.semibold))
-                .foregroundStyle(tint)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(tint.opacity(0.08))
-        )
-    }
-}
-
-private struct ErrorBannerView: View {
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-            Text(message)
-                .font(.caption.weight(.medium))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+            .font(.system(size: 8.8, design: .monospaced))
+            .foregroundStyle(.secondary)
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.yellow.opacity(0.14))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(PulsePalette.accent.opacity(0.055))
         )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        }
+    }
+
+    private func reasoningMetric(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        }
+    }
+
+    private var statusColor: Color {
+        if point.session.signalState == .invalid {
+            return PulsePalette.invalid
+        }
+        if point.isRunning {
+            return PulsePalette.running
+        }
+        if point.session.signalState == .unknown {
+            return PulsePalette.unknown
+        }
+        return PulsePalette.valid
+    }
+
+    private var threadColor: Color {
+        let index = TimelinePresentationBuilder.stablePaletteIndex(
+            threadID: point.threadID,
+            paletteCount: PulsePalette.seriesColors.count
+        )
+        return PulsePalette.seriesColors[index]
+    }
+
+    private func durationText(_ duration: TimeInterval) -> String {
+        if duration < 60 {
+            return "\(Int(duration.rounded()))s"
+        }
+        return "\(Int(duration / 60))m \(Int(duration.truncatingRemainder(dividingBy: 60)))s"
     }
 }
 
-private func signalColor(for signalState: TurnSignalState) -> Color {
-    switch signalState {
-    case .invalid:
-        return PulsePalette.invalid
-    case .valid:
-        return PulsePalette.valid
-    case .unknown:
-        return PulsePalette.unknown
+
+private struct CompactHeaderMetric: View {
+    let value: Int
+    let label: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(tint)
+                .frame(width: 5, height: 5)
+            Text(value.formatted())
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+            Text(label)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(value) \(label)")
+    }
+}
+
+private struct CompactErrorBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.yellow)
+            Text(message)
+                .font(.system(size: 10.5, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.yellow.opacity(0.12))
+        )
+        .help(message)
     }
 }
 
 private func numberText(_ number: Int) -> String {
     number.formatted(.number.grouping(.automatic))
-}
-
-private func formatDate(_ date: Date?) -> String {
-    guard let date else {
-        return "-"
-    }
-    return date.formatted(date: .omitted, time: .shortened)
 }

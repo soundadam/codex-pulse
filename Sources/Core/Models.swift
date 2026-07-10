@@ -70,6 +70,24 @@ public struct TurnTokenUsageSnapshot: Sendable, Codable, Equatable {
     }
 }
 
+public struct TurnReasoningSample: Sendable, Codable, Equatable, Identifiable {
+    public let observedAt: Date
+    public let tokenUsage: TurnTokenUsageSnapshot
+
+    public init(observedAt: Date, tokenUsage: TurnTokenUsageSnapshot) {
+        self.observedAt = observedAt
+        self.tokenUsage = tokenUsage
+    }
+
+    public var id: String {
+        "\(Int(observedAt.timeIntervalSince1970 * 1_000)):\(tokenUsage.last.reasoningOutputTokens)"
+    }
+
+    public var reasoningOutputTokens: Int {
+        tokenUsage.last.reasoningOutputTokens
+    }
+}
+
 public enum TurnSignalState: String, Sendable, Codable, Equatable {
     case invalid
     case valid
@@ -122,6 +140,7 @@ public struct LatestTurn: Sendable, Codable, Equatable {
     public let reasoningEffort: String?
     public let usage: TurnUsage
     public let tokenUsage: TurnTokenUsageSnapshot
+    public let reasoningSamples: [TurnReasoningSample]
     public let lastAgentMessage: String?
 
     public init(
@@ -133,7 +152,8 @@ public struct LatestTurn: Sendable, Codable, Equatable {
         reasoningEffort: String?,
         usage: TurnUsage,
         lastAgentMessage: String?,
-        tokenUsage: TurnTokenUsageSnapshot? = nil
+        tokenUsage: TurnTokenUsageSnapshot? = nil,
+        reasoningSamples: [TurnReasoningSample] = []
     ) {
         self.turnId = turnId
         self.status = status
@@ -143,6 +163,7 @@ public struct LatestTurn: Sendable, Codable, Equatable {
         self.reasoningEffort = reasoningEffort
         self.usage = usage
         self.tokenUsage = tokenUsage ?? TurnTokenUsageSnapshot(last: usage, total: usage)
+        self.reasoningSamples = reasoningSamples
         self.lastAgentMessage = lastAgentMessage
     }
 
@@ -430,6 +451,7 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
     public let monitorState: MonitorState
     public let signalState: TurnSignalState
     public let assistantPreview: String?
+    public let reasoningSamples: [TurnReasoningSample]
 
     public init(
         key: String,
@@ -448,7 +470,8 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
         tokenUsage: TurnTokenUsageSnapshot,
         monitorState: MonitorState,
         signalState: TurnSignalState = .unknown,
-        assistantPreview: String?
+        assistantPreview: String?,
+        reasoningSamples: [TurnReasoningSample] = []
     ) {
         self.key = key
         self.threadId = threadId
@@ -467,6 +490,7 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
         self.monitorState = monitorState
         self.signalState = signalState
         self.assistantPreview = assistantPreview
+        self.reasoningSamples = reasoningSamples
     }
 
     public var id: String { key }
@@ -508,7 +532,31 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
             tokenUsage: tokenUsage,
             monitorState: monitorState,
             signalState: signalState,
-            assistantPreview: assistantPreview
+            assistantPreview: assistantPreview,
+            reasoningSamples: reasoningSamples
+        )
+    }
+
+    public func withReasoningSamples(_ reasoningSamples: [TurnReasoningSample]) -> CompletedSession {
+        CompletedSession(
+            key: key,
+            threadId: threadId,
+            turnId: turnId,
+            projectName: projectName,
+            subtitle: subtitle,
+            threadTitle: threadTitle,
+            source: source,
+            rolloutPath: rolloutPath,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            usage: usage,
+            tokenUsage: tokenUsage,
+            monitorState: monitorState,
+            signalState: signalState,
+            assistantPreview: assistantPreview,
+            reasoningSamples: reasoningSamples
         )
     }
 

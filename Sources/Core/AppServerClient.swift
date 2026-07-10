@@ -47,10 +47,29 @@ public struct AppServerLaunchConfiguration: Sendable, Equatable {
     public static func codexAppServer(
         processEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppServerLaunchConfiguration {
-        AppServerLaunchConfiguration(
+        let environment = buildLaunchEnvironment(from: processEnvironment)
+        let home = processEnvironment["HOME"] ?? NSHomeDirectory()
+        let candidates = [
+            processEnvironment["CODEX_APP_SERVER_EXECUTABLE"],
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+            "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
+            "\(home)/Applications/Codex.app/Contents/Resources/codex",
+        ]
+        .compactMap { $0 }
+
+        if let executable = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) {
+            return AppServerLaunchConfiguration(
+                executableURL: URL(fileURLWithPath: executable),
+                arguments: ["app-server"],
+                environment: environment
+            )
+        }
+
+        return AppServerLaunchConfiguration(
             executableURL: URL(fileURLWithPath: "/usr/bin/env"),
             arguments: ["codex", "app-server"],
-            environment: buildLaunchEnvironment(from: processEnvironment)
+            environment: environment
         )
     }
 
@@ -93,7 +112,7 @@ private struct JSONRPCInitializeParams: Encodable {
     let clientInfo = ClientInfo(
         name: "codex_pulse",
         title: "Codex Pulse",
-        version: "0.1.0"
+        version: "0.3.0"
     )
     let capabilities = Capabilities(
         experimentalApi: true,
@@ -157,6 +176,7 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
 
     private let launchConfiguration: AppServerLaunchConfiguration
     private let requestTimeout: Duration
+    private let timeoutFailureThreshold: Int
     private let baseBackoff: Duration
     private let maxBackoff: Duration
     private let decoder = JSONDecoder()
@@ -166,6 +186,10 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
     private var stdinHandle: FileHandle?
     private var stdoutHandle: FileHandle?
     private var stderrHandle: FileHandle?
+    private var stdoutReadTask: Task<Void, Never>?
+    private var stderrReadTask: Task<Void, Never>?
+    private var stdoutStreamContinuation: AsyncStream<Data>.Continuation?
+    private var stderrStreamContinuation: AsyncStream<Data>.Continuation?
     private var stdoutBuffer = Data()
     private var stderrLineBuffer = Data()
     private var stderrBuffer = ""
@@ -177,15 +201,19 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
     private var eventHandler: EventHandler?
     private var desiredSubscribedThreadIDs: Set<String> = []
     private var activeSubscribedThreadIDs: Set<String> = []
+    private var isReconcilingSubscriptions = false
+    private var consecutiveRequestTimeouts = 0
 
     public init(
         launchConfiguration: AppServerLaunchConfiguration = .codexAppServer(),
         requestTimeout: Duration = .seconds(30),
+        timeoutFailureThreshold: Int = 3,
         baseBackoff: Duration = .seconds(1),
         maxBackoff: Duration = .seconds(30)
     ) {
         self.launchConfiguration = launchConfiguration
         self.requestTimeout = requestTimeout
+        self.timeoutFailureThreshold = max(1, timeoutFailureThreshold)
         self.baseBackoff = baseBackoff
         self.maxBackoff = maxBackoff
         self.currentBackoff = baseBackoff
@@ -194,6 +222,10 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
 
     deinit {
         stdinHandle?.closeFile()
+        stdoutReadTask?.cancel()
+        stderrReadTask?.cancel()
+        stdoutStreamContinuation?.finish()
+        stderrStreamContinuation?.finish()
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
@@ -233,10 +265,18 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
 
     public func syncSubscriptions(threadIDs: [String]) async {
         desiredSubscribedThreadIDs = Set(threadIDs)
+        guard isReconcilingSubscriptions == false else {
+            return
+        }
+
+        isReconcilingSubscriptions = true
+        defer { isReconcilingSubscriptions = false }
 
         do {
             try await ensureConnected()
-            try await reconcileSubscriptions()
+            while activeSubscribedThreadIDs != desiredSubscribedThreadIDs {
+                try await reconcileSubscriptions()
+            }
         } catch {
             return
         }
@@ -245,6 +285,7 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
     public func shutdown() {
         let activeProcess = process
         activeProcess?.terminationHandler = nil
+        stopOutputReaders()
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
@@ -271,6 +312,8 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         isInitialized = false
         activeSubscribedThreadIDs.removeAll()
         desiredSubscribedThreadIDs.removeAll()
+        isReconcilingSubscriptions = false
+        consecutiveRequestTimeouts = 0
     }
 
     private func makeThreadRef(from item: ThreadListItem) -> CodexThreadRef {
@@ -420,24 +463,42 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         self.stdoutHandle = stdoutPipe.fileHandleForReading
         self.stderrHandle = stderrPipe.fileHandleForReading
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard data.isEmpty == false else {
-                return
-            }
-            Task {
+        let stdoutStream = AsyncStream<Data>.makeStream()
+        stdoutStreamContinuation = stdoutStream.continuation
+        stdoutReadTask = Task { [weak self] in
+            for await data in stdoutStream.stream {
+                guard let self else {
+                    return
+                }
                 await self.consumeStdout(data)
             }
         }
-
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [continuation = stdoutStream.continuation] handle in
             let data = handle.availableData
-            guard data.isEmpty == false else {
+            if data.isEmpty {
+                continuation.finish()
                 return
             }
-            Task {
+            continuation.yield(data)
+        }
+
+        let stderrStream = AsyncStream<Data>.makeStream()
+        stderrStreamContinuation = stderrStream.continuation
+        stderrReadTask = Task { [weak self] in
+            for await data in stderrStream.stream {
+                guard let self else {
+                    return
+                }
                 await self.consumeStderr(data)
             }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { [continuation = stderrStream.continuation] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                continuation.finish()
+                return
+            }
+            continuation.yield(data)
         }
 
         process.terminationHandler = { [weak process] terminatedProcess in
@@ -485,6 +546,7 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         }
 
         pending.timeoutTask.cancel()
+        consecutiveRequestTimeouts = 0
 
         if let errorObject = object["error"] as? [String: Any] {
             let message = (errorObject["message"] as? String) ?? "JSON-RPC request failed"
@@ -509,7 +571,10 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         pending.timeoutTask.cancel()
         let error = AppServerClientError.requestTimedOut(method: method)
         pending.continuation.resume(throwing: error)
-        await handleFailure(error)
+        consecutiveRequestTimeouts += 1
+        if consecutiveRequestTimeouts >= timeoutFailureThreshold {
+            await handleFailure(error)
+        }
     }
 
     private func processDidTerminate(code: Int32) async {
@@ -524,6 +589,7 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
     private func handleFailure(_ error: Error) async {
         let activeProcess = process
         activeProcess?.terminationHandler = nil
+        stopOutputReaders()
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
@@ -537,6 +603,7 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         process = nil
         isInitialized = false
         activeSubscribedThreadIDs.removeAll()
+        consecutiveRequestTimeouts = 0
 
         if let activeProcess, activeProcess.isRunning {
             activeProcess.terminate()
@@ -551,6 +618,17 @@ public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing 
         }
 
         scheduleBackoff()
+    }
+
+    private func stopOutputReaders() {
+        stdoutReadTask?.cancel()
+        stderrReadTask?.cancel()
+        stdoutReadTask = nil
+        stderrReadTask = nil
+        stdoutStreamContinuation?.finish()
+        stderrStreamContinuation?.finish()
+        stdoutStreamContinuation = nil
+        stderrStreamContinuation = nil
     }
 
     private func appendStderr(_ line: String) async {

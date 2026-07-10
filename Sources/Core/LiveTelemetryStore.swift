@@ -139,7 +139,13 @@ public struct LiveTelemetryStore: Sendable {
                 tokenUsage: update.tokenUsage,
                 monitorState: signalState == .invalid ? .suspicious : .running,
                 signalState: signalState,
-                assistantPreview: context.assistantPreview
+                assistantPreview: context.assistantPreview,
+                reasoningSamples: [
+                    TurnReasoningSample(
+                        observedAt: update.observedAt,
+                        tokenUsage: update.tokenUsage
+                    )
+                ]
             )
         )
 

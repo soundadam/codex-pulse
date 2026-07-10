@@ -20,7 +20,7 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         popover.behavior = .applicationDefined
         popover.animates = false
         popover.delegate = self
-        popover.contentSize = NSSize(width: 840, height: 620)
+        popover.contentSize = NSSize(width: 760, height: 520)
         popover.contentViewController = NSHostingController(
             rootView: InspectorRootView(model: model)
         )
@@ -191,4 +191,5 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         let rectOnScreen = window.convertToScreen(rectInWindow)
         return rectOnScreen.insetBy(dx: -4, dy: -4).contains(point)
     }
+
 }

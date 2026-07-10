@@ -7,78 +7,16 @@ enum PulsePalette {
     static let running = Color(red: 0.96, green: 0.57, blue: 0.17)
     static let unknown = Color.secondary
     static let surface = Color(nsColor: .controlBackgroundColor).opacity(0.86)
-}
-
-struct HeaderMetric: View {
-    let value: Int
-    let label: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(tint)
-                .frame(width: 7, height: 7)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(value.formatted())
-                    .font(.system(.caption, design: .rounded).weight(.bold))
-                    .foregroundStyle(value == 0 ? .secondary : .primary)
-                Text(label)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .background(
-            Capsule(style: .continuous)
-                .fill(tint.opacity(value == 0 ? 0.055 : 0.10))
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(value) \(label)")
-    }
-}
-
-struct SectionHeading: View {
-    let eyebrow: String
-    let title: String
-    var trailing: String? = nil
-
-    var body: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(eyebrow)
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.9)
-                    .foregroundStyle(PulsePalette.accent)
-                Text(title)
-                    .font(.system(.headline, design: .rounded).weight(.bold))
-            }
-            Spacer()
-            if let trailing {
-                Text(trailing)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-struct SignalLegend: View {
-    let label: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
+    static let seriesColors: [Color] = [
+        Color(red: 0.36, green: 0.64, blue: 0.76),
+        Color(red: 0.49, green: 0.57, blue: 0.69),
+        Color(red: 0.36, green: 0.61, blue: 0.61),
+        Color(red: 0.56, green: 0.51, blue: 0.67),
+        Color(red: 0.48, green: 0.59, blue: 0.65),
+        Color(red: 0.62, green: 0.58, blue: 0.68),
+        Color(red: 0.54, green: 0.57, blue: 0.60),
+        Color(red: 0.40, green: 0.53, blue: 0.68),
+    ]
 }
 
 private struct PulseSurfaceModifier: ViewModifier {

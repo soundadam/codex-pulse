@@ -57,11 +57,137 @@ struct AppModelTests {
         #expect(model.recentReasoningSessions.count == 1)
         #expect(model.recentReasoningSessions.first?.key == "thread-1:turn-1")
         #expect(model.recentReasoningSessions.first?.signalState == .unknown)
-        #expect(model.selectedCompletedSession?.key == "thread-1:turn-1")
+        #expect(model.selectedCompletedSession == nil)
+        #expect(model.selectedThreadID == nil)
     }
 
     @Test
-    func refreshKeepsLastHourAndCapsTimelineAtTen() async throws {
+    func keepsLastSnapshotQuietlyAcrossOneTransientDiscoveryFailure() async throws {
+        let rolloutURL = try writeCompletedRollout()
+        let discovery = ToggleThreadDiscoveryService(
+            threads: [
+                CodexThreadRef(
+                    id: "thread-1",
+                    name: "First thread",
+                    preview: "Preview text",
+                    source: "cli",
+                    cwd: "/tmp/project-a",
+                    rolloutPath: rolloutURL.path,
+                    updatedAt: Self.date("2026-07-09T00:00:05.000Z")
+                )
+            ]
+        )
+        let model = AppModel(
+            discoveryService: discovery,
+            rolloutParser: RolloutParser(),
+            notificationSender: MockNotificationSender(),
+            notificationStore: InMemoryNotificationStore(),
+            nowProvider: { Self.date("2026-07-09T00:30:00.000Z") }
+        )
+
+        model.refreshNow()
+        try await eventuallyAsync {
+            await discovery.callCount == 1 && model.snapshot != nil
+        }
+
+        await discovery.setShouldFail(true)
+        model.refreshNow()
+        try await eventuallyAsync {
+            await discovery.callCount == 2 && model.isRefreshing == false
+        }
+        #expect(model.snapshot?.threads.map(\.id) == ["thread-1"])
+        #expect(model.errorMessage == nil)
+
+        model.refreshNow()
+        try await eventuallyAsync {
+            await discovery.callCount == 3 && model.isRefreshing == false
+        }
+        #expect(model.errorMessage?.contains("thread/list") == true)
+    }
+
+    @Test
+    func sendsRealtimeSubscriptionsToIndependentService() async throws {
+        let rolloutURL = try writeCompletedRollout()
+        let thread = CodexThreadRef(
+            id: "thread-1",
+            name: "First thread",
+            preview: "Preview text",
+            source: "cli",
+            cwd: "/tmp/project-a",
+            rolloutPath: rolloutURL.path,
+            updatedAt: Self.date("2026-07-09T00:00:05.000Z")
+        )
+        let discovery = MockThreadDiscoveryService(threads: [thread])
+        let realtime = MockRealtimeThreadService(threads: [])
+        let model = AppModel(
+            discoveryService: discovery,
+            realtimeService: realtime,
+            rolloutParser: RolloutParser(),
+            notificationSender: MockNotificationSender(),
+            notificationStore: InMemoryNotificationStore(),
+            refreshInterval: .seconds(3_600),
+            nowProvider: { Self.date("2026-07-09T00:30:00.000Z") }
+        )
+        defer { model.stop() }
+
+        model.start()
+        try await eventuallyAsync {
+            await realtime.lastSubscribedThreadIDs == ["thread-1"]
+        }
+
+        #expect(model.snapshot?.threads.map(\.id) == ["thread-1"])
+    }
+
+    @Test
+    func timelineFocusResetsAndNormalizesWhenWindowHidesSelection() async throws {
+        let rolloutURL = try writeCompletedRollout(reasoning: 120)
+        let discovery = MockThreadDiscoveryService(
+            threads: [
+                CodexThreadRef(
+                    id: "thread-1",
+                    name: "First thread",
+                    preview: "Preview text",
+                    source: "cli",
+                    cwd: "/tmp/project-a",
+                    rolloutPath: rolloutURL.path,
+                    updatedAt: Self.date("2026-07-09T00:00:05.000Z")
+                )
+            ]
+        )
+        let model = AppModel(
+            discoveryService: discovery,
+            rolloutParser: RolloutParser(),
+            notificationSender: MockNotificationSender(),
+            notificationStore: InMemoryNotificationStore(),
+            nowProvider: { Self.date("2026-07-09T00:20:00.000Z") }
+        )
+
+        model.refreshNow()
+        try await eventually {
+            model.timelinePoints.count == 1
+        }
+
+        model.selectThreadLine("thread-1")
+        #expect(model.selectedThreadID == "thread-1")
+        #expect(model.selectedTimelinePoint == nil)
+
+        model.selectTimelinePoint("thread-1:turn-1")
+        #expect(model.selectedTimelinePoint?.id == "thread-1:turn-1")
+
+        model.setTimelineWindow(.fifteenMinutes)
+        #expect(model.timelinePoints.isEmpty)
+        #expect(model.selectedThreadID == nil)
+        #expect(model.selectedTimelinePoint == nil)
+
+        model.setTimelineWindow(.thirtyMinutes)
+        model.selectThreadLine("thread-1")
+        model.resetTimelineFocus()
+        #expect(model.selectedThreadID == nil)
+        #expect(model.selectedTimelinePoint == nil)
+    }
+
+    @Test
+    func oneHourWindowKeepsAllRecentTurnsWithinPointLimit() async throws {
         var threads: [CodexThreadRef] = []
         for index in 1...12 {
             let rolloutURL = try writeNamedTurnRollout(
@@ -96,10 +222,13 @@ struct AppModelTests {
         try await eventually {
             model.snapshot != nil
         }
+        model.setTimelineWindow(.oneHour)
 
         #expect(model.snapshot?.threads.count == 12)
-        #expect(model.recentReasoningSessions.count == 10)
+        #expect(model.recentReasoningSessions.count == 12)
         #expect(model.recentReasoningSessions.map(\.key) == [
+            "thread-1:turn-1",
+            "thread-2:turn-2",
             "thread-3:turn-3",
             "thread-4:turn-4",
             "thread-5:turn-5",
@@ -111,11 +240,11 @@ struct AppModelTests {
             "thread-11:turn-11",
             "thread-12:turn-12",
         ])
-        #expect(model.selectedCompletedSession?.key == "thread-12:turn-12")
+        #expect(model.selectedCompletedSession == nil)
     }
 
     @Test
-    func filtersThreadsAndTurnsOlderThanOneHour() async throws {
+    func filtersTimelineTurnsOlderThanOneHour() async throws {
         let recentRollout = try writeNamedTurnRollout(turnID: "turn-recent", minute: 10, reasoning: 123)
         let oldRollout = try writeRollout(
             """
@@ -162,14 +291,11 @@ struct AppModelTests {
         }
 
         #expect(model.recentReasoningSessions.map(\.threadId) == ["thread-recent"])
-
-        model.setSelectedTab(.threadDetail)
-        #expect(model.threadDetailThreads.map(\.id) == ["thread-recent"])
-        #expect(model.selectedThreadTurns.map(\.displayTurnID) == ["turn-recent"])
+        #expect(model.timelineSeries.map(\.threadID) == ["thread-recent"])
     }
 
     @Test
-    func liveTokenUsageUpdatesFeedTimelineAndDetailMode() async throws {
+    func liveTokenUsageUpdatesFeedMultiThreadTimelineAndInspector() async throws {
         let discovery = MockRealtimeThreadService(
             threads: [
                 CodexThreadRef(
@@ -237,14 +363,11 @@ struct AppModelTests {
         #expect(model.recentReasoningSessions.first?.projectName == "live-project")
         #expect(model.recentReasoningSessions.first?.timelineReasoningTokens == 516)
         #expect(model.recentReasoningSessions.first?.signalState == .invalid)
+        model.selectTimelinePoint("thread-live:turn-live")
         #expect(model.selectedTimelineTurnDetail?.key == "thread-live:turn-live")
         #expect(model.selectedTimelineTurnDetail?.signalState == .invalid)
         #expect(model.selectedTimelineTurnSamples.count == 1)
-
-        model.setSelectedTab(.threadDetail)
-        #expect(model.selectedThreadTurnGroup?.threadId == "thread-live")
-        #expect(model.selectedTurnDetail?.signalState == .invalid)
-        #expect(model.selectedTurnSamples.count == 1)
+        #expect(model.selectedThreadID == "thread-live")
     }
 
     @Test
@@ -315,9 +438,9 @@ struct AppModelTests {
         }
 
         #expect(model.recentReasoningSessions.first?.timelineReasoningTokens == 120)
-
-        model.setSelectedTab(.threadDetail)
-        #expect(model.selectedTurnSamples.count == 2)
+        model.selectTimelinePoint("thread-live:turn-live")
+        #expect(model.selectedTimelineTurnSamples.count == 2)
+        #expect(model.selectedTimelinePoint?.reasoningSamples.map(\.reasoningTokens) == [100, 120])
     }
 
     @Test
@@ -361,7 +484,7 @@ struct AppModelTests {
         try await eventually {
             model.snapshot != nil
         }
-        #expect(model.selectedThreadID == "thread-1")
+        #expect(model.selectedThreadID == nil)
 
         for (reasoning, timestamp) in [(100, 10), (130, 11)] {
             await discovery.emit(
@@ -380,11 +503,11 @@ struct AppModelTests {
             )
         }
 
-        model.setSelectedTab(.threadDetail)
-        model.selectThread("thread-2")
+        model.selectTimelinePoint("thread-2:turn-2")
 
-        #expect(model.selectedTurnDetail?.key == "thread-2:turn-2")
-        #expect(model.selectedTurnSamples.count == 2)
+        #expect(model.selectedTimelineTurnDetail?.key == "thread-2:turn-2")
+        #expect(model.selectedTimelineTurnSamples.count == 2)
+        #expect(model.selectedTimelinePoint?.reasoningSamples.map(\.reasoningTokens) == [100, 130])
     }
 
     @Test
@@ -437,6 +560,7 @@ struct AppModelTests {
         try await eventually {
             model.recentReasoningSessions.first?.key.hasPrefix("live:thread-live:turn-live") == true
         }
+        model.selectTimelinePoint("thread-live:turn-live")
 
         try overwriteRollout(
             at: rolloutURL,
@@ -466,11 +590,6 @@ struct AppModelTests {
         #expect(model.recentReasoningSessions.first(where: { $0.key == "thread-live:turn-live" })?.signalState == .invalid)
         #expect(model.selectedTimelineTurnDetail?.key == "thread-live:turn-live")
         #expect(model.selectedTimelineTurnSamples.count == 1)
-
-        model.setSelectedTab(.threadDetail)
-        #expect(model.selectedTurnDetail?.key == "thread-live:turn-live")
-        #expect(model.selectedTurnDetail?.signalState == .invalid)
-        #expect(model.selectedTurnSamples.count == 1)
     }
 
     @Test
@@ -516,9 +635,67 @@ struct AppModelTests {
             await discovery.lastSubscribedThreadIDs == ["thread-2"]
         }
 
-        model.selectThread("thread-1")
+        await discovery.emit(
+            .tokenUsageUpdated(
+                ThreadTokenUsageUpdate(
+                    threadId: "thread-1",
+                    turnId: "turn-1",
+                    tokenUsage: TurnTokenUsageSnapshot(
+                        last: TurnUsage(reasoningOutputTokens: 120),
+                        total: TurnUsage(reasoningOutputTokens: 420)
+                    ),
+                    modelContextWindow: 258_400,
+                    observedAt: Self.date("2026-07-09T03:04:00.000Z")
+                )
+            )
+        )
+        try await eventually {
+            model.timelineSeries.contains(where: { $0.threadID == "thread-1" })
+        }
+        model.selectThreadLine("thread-1")
         try await eventuallyAsync {
             await discovery.lastSubscribedThreadIDs.contains("thread-1")
+        }
+    }
+
+    @Test
+    func allRunningThreadsAreSubscribedWithoutAThreeThreadCap() async throws {
+        var threads: [CodexThreadRef] = []
+        let expectedIDs = Set((1...5).map { "thread-\($0)" })
+
+        for index in 1...5 {
+            let rollout = try writeRunningRollout(turnID: "turn-\(index)")
+            threads.append(
+                CodexThreadRef(
+                    id: "thread-\(index)",
+                    name: "Running \(index)",
+                    preview: "working",
+                    source: "cli",
+                    cwd: "/tmp/project-\(index)",
+                    rolloutPath: rollout.path,
+                    updatedAt: Self.date("2026-07-09T02:00:0\(index).000Z")
+                )
+            )
+        }
+
+        let discovery = MockRealtimeThreadService(threads: threads)
+        let model = AppModel(
+            discoveryService: discovery,
+            rolloutParser: RolloutParser(),
+            notificationSender: MockNotificationSender(),
+            notificationStore: InMemoryNotificationStore(),
+            refreshInterval: .seconds(3_600),
+            nowProvider: { Self.date("2026-07-09T02:05:00.000Z") }
+        )
+
+        model.start()
+        defer { model.stop() }
+
+        try await eventually {
+            model.snapshot?.runningCount == 5
+        }
+        try await eventuallyAsync {
+            Set(await discovery.lastSubscribedThreadIDs) == expectedIDs
         }
     }
 
@@ -641,6 +818,28 @@ actor MockThreadDiscoveryService: ThreadDiscoveryService {
 
     func listThreads(limit: Int, cwdFilters: [String]) async throws -> [CodexThreadRef] {
         Array(threads.prefix(limit))
+    }
+}
+
+actor ToggleThreadDiscoveryService: ThreadDiscoveryService {
+    let threads: [CodexThreadRef]
+    private(set) var callCount = 0
+    private var shouldFail = false
+
+    init(threads: [CodexThreadRef]) {
+        self.threads = threads
+    }
+
+    func setShouldFail(_ shouldFail: Bool) {
+        self.shouldFail = shouldFail
+    }
+
+    func listThreads(limit: Int, cwdFilters: [String]) async throws -> [CodexThreadRef] {
+        callCount += 1
+        if shouldFail {
+            throw AppServerClientError.requestTimedOut(method: "thread/list")
+        }
+        return Array(threads.prefix(limit))
     }
 }
 

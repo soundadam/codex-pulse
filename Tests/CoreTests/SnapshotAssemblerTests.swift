@@ -23,7 +23,16 @@ struct SnapshotAssemblerTests {
             model: "gpt-5.5",
             reasoningEffort: "high",
             usage: TurnUsage(reasoningOutputTokens: 516),
-            lastAgentMessage: "latest"
+            lastAgentMessage: "latest",
+            reasoningSamples: [
+                TurnReasoningSample(
+                    observedAt: date("2026-07-09T00:01:05.000Z"),
+                    tokenUsage: TurnTokenUsageSnapshot(
+                        last: TurnUsage(reasoningOutputTokens: 516),
+                        total: TurnUsage(reasoningOutputTokens: 516)
+                    )
+                )
+            ]
         )
         let runningTurn = LatestTurn(
             turnId: "turn-3",
@@ -62,6 +71,7 @@ struct SnapshotAssemblerTests {
         #expect(snapshot.projectCards[1].monitorState == .suspicious)
         #expect(snapshot.completedSessions.map(\.key) == ["2:turn-2", "1:turn-1"])
         #expect(snapshot.completedSessions.first?.tokenUsage.total.reasoningOutputTokens == 516)
+        #expect(snapshot.completedSessions.first?.reasoningSamples.count == 1)
         #expect(snapshot.threadTurnGroups.map(\.threadId) == ["2", "1"])
         #expect(snapshot.threadTurnGroups.first?.turns.first?.displayTurnID == "turn-2")
     }
