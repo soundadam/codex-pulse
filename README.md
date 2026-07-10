@@ -27,7 +27,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Pulse.app"
 open -a "Codex Pulse"
 ```
 
-The 1.0 build is hardened-runtime, ad-hoc signed, and universal for Apple Silicon and Intel Macs. It is not yet Apple-notarized, so Homebrew verifies the release checksum first and the explicit `xattr` step removes quarantine before first launch. See [Release and signing](docs/release.md) for the trust boundary and the future notarization path.
+The current build is hardened-runtime, ad-hoc signed, and universal for Apple Silicon and Intel Macs. It is not yet Apple-notarized, so Homebrew verifies the release checksum first and the explicit `xattr` step removes quarantine before first launch. See [Release and signing](docs/release.md) for the trust boundary and the future notarization path.
 
 You can also download `Codex-Pulse-1.0.1-macOS-universal.zip` from the [latest release](https://github.com/soundadam/codex-pulse/releases/latest), move the app to `/Applications`, and remove quarantine before first launch:
 

@@ -32,7 +32,10 @@ fi
     "$APP_PATH" \
     "$ARCHIVE_PATH"
 
-/usr/bin/shasum -a 256 "$ARCHIVE_PATH" > "$CHECKSUM_PATH"
+(
+    cd "$DIST_DIR"
+    /usr/bin/shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+)
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 /usr/bin/lipo -archs "$APP_PATH/Contents/MacOS/CodexPulseRuntime"
 
