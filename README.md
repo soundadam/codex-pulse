@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/soundadam/codex-pulse/releases/latest"><img alt="GitHub release" src="https://img.shields.io/github/v/release/soundadam/codex-pulse?style=flat-square"></a>
   <a href="https://github.com/soundadam/codex-pulse/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/soundadam/codex-pulse/ci.yml?style=flat-square&label=tests"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-2563eb?style=flat-square"></a>
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111827?style=flat-square&logo=apple">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white">
 </p>
@@ -28,7 +29,7 @@ open -a "Codex Pulse"
 
 The 1.0 build is hardened-runtime, ad-hoc signed, and universal for Apple Silicon and Intel Macs. It is not yet Apple-notarized, so Homebrew verifies the release checksum first and the explicit `xattr` step removes quarantine before first launch. See [Release and signing](docs/release.md) for the trust boundary and the future notarization path.
 
-You can also download `Codex-Pulse-1.0.0-macOS-universal.zip` from the [latest release](https://github.com/soundadam/codex-pulse/releases/latest), move the app to `/Applications`, and remove quarantine before first launch:
+You can also download `Codex-Pulse-1.0.1-macOS-universal.zip` from the [latest release](https://github.com/soundadam/codex-pulse/releases/latest), move the app to `/Applications`, and remove quarantine before first launch:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Codex Pulse.app"
@@ -96,7 +97,7 @@ swift build -c release --arch arm64 --arch x86_64 --product CodexPulseApp
 Create a validated release archive and checksum:
 
 ```bash
-./scripts/package_release.sh 1.0.0
+./scripts/package_release.sh 1.0.1
 ```
 
 The app bundle remains fixed at 760×520 and uses AppKit for the status item and popover shell, SwiftUI + Swift Charts for presentation, and Swift actors for app-server, rollout, and cache isolation.
@@ -105,10 +106,15 @@ The app bundle remains fixed at 760×520 and uses AppKit for the status item and
 
 - [Reasoning timeline and signal model](docs/reasoning-timeline.md)
 - [Release, signing, and Homebrew](docs/release.md)
+- [Codex Pulse 1.0.1 release notes](docs/releases/1.0.1.md)
 - [Codex Pulse 1.0 release notes](docs/releases/1.0.0.md)
 - [Changelog](CHANGELOG.md)
 - [Security and privacy](SECURITY.md)
 
 ## Status
 
-`v1.0.0` is the first stable release. The single multi-Thread timeline, lazy Turn inspection, bounded disk cache, realtime reconciliation, resource lifecycle, and Homebrew packaging are treated as the stable product surface.
+`v1.0.1` is the current stable release. The single multi-Thread timeline, lazy Turn inspection, bounded disk cache, realtime reconciliation, resource lifecycle, and Homebrew packaging are treated as the stable product surface.
+
+## License
+
+Codex Pulse is licensed under the [GNU Affero General Public License v3.0 only](LICENSE), identified as `AGPL-3.0-only`. Modified distributions must preserve the same license and corresponding-source obligations; modified network deployments must offer their corresponding source to users interacting with them remotely.

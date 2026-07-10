@@ -19,7 +19,7 @@ public final class AppModel {
     private(set) var lastRefreshAt: Date?
     private(set) var errorMessage: String?
     private(set) var dataWarningMessage: String?
-    private(set) var statusTitle = "Cdx"
+    private(set) var statusTitle = "Idle"
     private(set) var selectedTimelineWindow: TimelineWindow = .oneHour
     private(set) var selectedSessionKey: String?
     private(set) var selectedThreadID: String?

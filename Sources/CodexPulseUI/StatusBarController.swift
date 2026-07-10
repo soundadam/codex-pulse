@@ -23,15 +23,38 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         popover.contentSize = NSSize(width: 760, height: 520)
 
         if let button = statusItem.button {
-            button.title = model.statusTitle
+            configure(button)
+            update(button, title: model.statusTitle)
             button.target = self
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp])
         }
 
         model.onStatusTitleChange = { [weak self] title in
-            self?.statusItem.button?.title = title
+            guard let button = self?.statusItem.button else {
+                return
+            }
+            self?.update(button, title: title)
         }
+    }
+
+    private func configure(_ button: NSStatusBarButton) {
+        let symbol = NSImage(
+            systemSymbolName: "waveform.path.ecg",
+            accessibilityDescription: "Codex Pulse"
+        )
+        let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        button.image = symbol?.withSymbolConfiguration(configuration) ?? symbol
+        button.image?.isTemplate = true
+        button.imagePosition = .imageLeading
+        button.imageScaling = .scaleProportionallyDown
+    }
+
+    private func update(_ button: NSStatusBarButton, title: String) {
+        let accessibilityLabel = StatusItemTitleFormatter.accessibilityLabel(for: title)
+        button.title = title
+        button.toolTip = accessibilityLabel
+        button.setAccessibilityLabel(accessibilityLabel)
     }
 
     @objc

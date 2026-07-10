@@ -7,19 +7,19 @@ struct StatusItemTitleFormatter {
         runningCount: Int,
         errorMessage: String?
     ) -> String {
-        let base: String
-        if suspiciousCount > 0 {
-            base = "Cdx !\(suspiciousCount) ~\(runningCount)"
-        } else if runningCount > 0 {
-            base = "Cdx ~\(runningCount)"
-        } else {
-            base = "Cdx"
+        if let errorMessage, errorMessage.isEmpty == false {
+            return "Sync issue"
         }
 
-        guard let errorMessage, errorMessage.isEmpty == false else {
-            return base
+        var parts: [String] = []
+        if suspiciousCount > 0 {
+            let noun = suspiciousCount == 1 ? "issue" : "issues"
+            parts.append("\(suspiciousCount) \(noun)")
         }
-        return "\(base)?"
+        if runningCount > 0 {
+            parts.append("\(runningCount) running")
+        }
+        return parts.isEmpty ? "Idle" : parts.joined(separator: " · ")
     }
 
     static func title(snapshot: MonitorSnapshot?, errorMessage: String?) -> String {
@@ -29,4 +29,9 @@ struct StatusItemTitleFormatter {
             errorMessage: errorMessage
         )
     }
+
+    static func accessibilityLabel(for title: String) -> String {
+        "Codex Pulse — \(title)"
+    }
+
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 — 2026-07-10
+
+- Replaced the cryptic `Cdx !1 ~3?` menu-bar shorthand with a native pulse icon and readable `Idle`, `running`, `issue`, and `Sync issue` states.
+- Added accessible menu-bar labels and descriptive hover text.
+- Licensed the project under `AGPL-3.0-only`.
+
 ## 1.0.0 — 2026-07-10
 
 Codex Pulse 1.0 establishes the stable product surface.

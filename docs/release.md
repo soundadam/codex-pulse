@@ -12,7 +12,7 @@ Run the complete local validation:
 
 ```bash
 swift test
-./scripts/package_release.sh 1.0.0
+./scripts/package_release.sh 1.0.1
 ```
 
 The packaging script rebuilds the bundle, verifies its version and signature, creates `dist/Codex-Pulse-<version>-macOS-universal.zip`, and writes the matching SHA-256 file.
@@ -22,8 +22,8 @@ The packaging script rebuilds the bundle, verifies its version and signature, cr
 Create and push the release commit and annotated tag:
 
 ```bash
-git tag -a v1.0.0 -m "Codex Pulse 1.0.0"
-git push origin main v1.0.0
+git tag -a v1.0.1 -m "Codex Pulse 1.0.1"
+git push origin main v1.0.1
 ```
 
 The release workflow validates the package and publishes both files from `dist/`. Release notes come from the matching section in `CHANGELOG.md`.

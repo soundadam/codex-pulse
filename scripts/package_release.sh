@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="${0:A:h:h}"
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.0.1}"
 APP_NAME="Codex Pulse.app"
 ARCHIVE_NAME="Codex-Pulse-${VERSION}-macOS-universal.zip"
 DIST_DIR="$REPO_ROOT/dist"

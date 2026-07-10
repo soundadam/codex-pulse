@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="/Users/adam/projects/2607-codex-usage/codex-pulse"
+REPO_ROOT="${0:A:h}"
 APP_BUNDLE_PATH="$REPO_ROOT/Codex Pulse.app"
 APP_BINARY_PATH="$APP_BUNDLE_PATH/Contents/MacOS/CodexPulseRuntime"
 BUILD_BINARY_PATH="$REPO_ROOT/.build/apple/Products/Release/CodexPulseApp"

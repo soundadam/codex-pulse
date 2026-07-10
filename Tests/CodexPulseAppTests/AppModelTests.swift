@@ -19,9 +19,20 @@ struct AppModelTests {
             projectCards: []
         )
 
-        #expect(StatusItemTitleFormatter.title(snapshot: snapshot, errorMessage: nil) == "Cdx !1 ~1")
-        #expect(StatusItemTitleFormatter.title(snapshot: snapshot, errorMessage: "boom") == "Cdx !1 ~1?")
-        #expect(StatusItemTitleFormatter.title(snapshot: nil, errorMessage: nil) == "Cdx")
+        #expect(StatusItemTitleFormatter.title(snapshot: snapshot, errorMessage: nil) == "1 issue · 1 running")
+        #expect(StatusItemTitleFormatter.title(snapshot: snapshot, errorMessage: "boom") == "Sync issue")
+        #expect(StatusItemTitleFormatter.title(snapshot: nil, errorMessage: nil) == "Idle")
+        #expect(
+            StatusItemTitleFormatter.title(
+                suspiciousCount: 2,
+                runningCount: 3,
+                errorMessage: nil
+            ) == "2 issues · 3 running"
+        )
+        #expect(
+            StatusItemTitleFormatter.accessibilityLabel(for: "3 running")
+                == "Codex Pulse — 3 running"
+        )
     }
 
     @Test
@@ -53,7 +64,7 @@ struct AppModelTests {
             model.snapshot != nil
         }
 
-        #expect(model.statusTitle == "Cdx")
+        #expect(model.statusTitle == "Idle")
         #expect(model.recentReasoningSessions.count == 1)
         #expect(model.recentReasoningSessions.first?.key == "thread-1:turn-1")
         #expect(model.recentReasoningSessions.first?.signalState == .unknown)
