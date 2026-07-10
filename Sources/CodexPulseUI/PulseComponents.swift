@@ -8,14 +8,14 @@ enum PulsePalette {
     static let unknown = Color.secondary
     static let surface = Color(nsColor: .controlBackgroundColor).opacity(0.86)
     static let seriesColors: [Color] = [
-        Color(red: 0.36, green: 0.64, blue: 0.76),
-        Color(red: 0.49, green: 0.57, blue: 0.69),
-        Color(red: 0.36, green: 0.61, blue: 0.61),
-        Color(red: 0.56, green: 0.51, blue: 0.67),
-        Color(red: 0.48, green: 0.59, blue: 0.65),
-        Color(red: 0.62, green: 0.58, blue: 0.68),
-        Color(red: 0.54, green: 0.57, blue: 0.60),
-        Color(red: 0.40, green: 0.53, blue: 0.68),
+        Color(red: 0.30, green: 0.68, blue: 0.78),
+        Color(red: 0.36, green: 0.48, blue: 0.82),
+        Color(red: 0.66, green: 0.50, blue: 0.76),
+        Color(red: 0.52, green: 0.65, blue: 0.48),
+        Color(red: 0.86, green: 0.75, blue: 0.36),
+        Color(red: 0.90, green: 0.89, blue: 0.84),
+        Color(red: 0.58, green: 0.61, blue: 0.65),
+        Color(red: 0.67, green: 0.58, blue: 0.48),
     ]
 }
 

@@ -6,6 +6,14 @@ import Testing
 
 struct TimelinePresentationTests {
     @Test
+    func historyWindowsStartAtOneHourAndScaleDiscoveryCost() {
+        #expect(TimelineWindow.allCases.map(\.shortLabel) == ["1h", "3h", "6h", "12h", "24h"])
+        #expect(TimelineWindow.oneHour.duration == 3_600)
+        #expect(TimelineWindow.oneDay.duration == 86_400)
+        #expect(TimelineWindow.allCases.map(\.fetchMultiplier) == [1, 2, 3, 4, 6])
+    }
+
+    @Test
     func groupsTurnsIntoIndependentThreadSeries() throws {
         let now = date("2026-07-10T10:00:00.000Z")
         let series = TimelinePresentationBuilder.build(
@@ -15,14 +23,13 @@ struct TimelinePresentationTests {
                 session(thread: "a", turn: "2", at: "2026-07-10T09:50:00.000Z", reasoning: 300),
             ],
             searchQuery: "",
-            window: .thirtyMinutes,
+            window: .oneHour,
             now: now
         )
 
         #expect(series.count == 2)
         let threadA = try #require(series.first(where: { $0.threadID == "a" }))
         #expect(threadA.points.map(\.id) == ["a:1", "a:2"])
-        #expect(Set(threadA.points.map(\.callTraceSeriesID)).count == 2)
         #expect(try #require(series.first(where: { $0.threadID == "b" })).points.map(\.id) == ["b:1"])
     }
 
@@ -60,7 +67,7 @@ struct TimelinePresentationTests {
         let series = TimelinePresentationBuilder.build(
             sessions: [completed, firstLive, latestLive, newerLive],
             searchQuery: "",
-            window: .thirtyMinutes,
+            window: .oneHour,
             now: now
         )
 
@@ -77,25 +84,25 @@ struct TimelinePresentationTests {
     func appliesWindowSearchAndGlobalPointLimit() throws {
         let now = date("2026-07-10T10:00:00.000Z")
         let sessions = [
-            session(thread: "a", turn: "1", at: "2026-07-10T09:35:00.000Z", reasoning: 10),
+            session(thread: "a", turn: "1", at: "2026-07-10T08:35:00.000Z", reasoning: 10),
             session(thread: "a", turn: "2", at: "2026-07-10T09:50:00.000Z", reasoning: 20, preview: "needle"),
             session(thread: "b", turn: "1", at: "2026-07-10T09:52:00.000Z", reasoning: 30),
             session(thread: "b", turn: "2", at: "2026-07-10T09:54:00.000Z", reasoning: 40),
         ]
 
-        let fifteenMinuteSeries = TimelinePresentationBuilder.build(
+        let oneHourSeries = TimelinePresentationBuilder.build(
             sessions: sessions,
             searchQuery: "needle",
-            window: .fifteenMinutes,
+            window: .oneHour,
             now: now
         )
-        #expect(fifteenMinuteSeries.map(\.threadID) == ["a"])
-        #expect(fifteenMinuteSeries.first?.points.map(\.id) == ["a:2"])
+        #expect(oneHourSeries.map(\.threadID) == ["a"])
+        #expect(oneHourSeries.first?.points.map(\.id) == ["a:2"])
 
         let limitedSeries = TimelinePresentationBuilder.build(
             sessions: sessions,
             searchQuery: "",
-            window: .oneHour,
+            window: .oneDay,
             now: now,
             pointLimit: 3
         )
@@ -121,16 +128,16 @@ struct TimelinePresentationTests {
     }
 
     @Test
-    func dualLogScaleMapsTurnTotalsAndCallsIndependently() {
-        let scale = TimelineDualLogScale(
-            turnValues: [1, 100, 10_000],
-            callValues: [1, 10, 1_000]
-        )
+    func nodeSizeScaleEncodesTotalTokensAsBoundedArea() {
+        let scale = TimelineNodeSizeScale(tokenValues: [100, 1_000, 10_000])
+        let small = scale.diameter(for: 100)
+        let medium = scale.diameter(for: 1_000)
+        let large = scale.diameter(for: 10_000)
 
-        #expect(abs(scale.turnPosition(for: 100) - 0.5) < 0.000_001)
-        #expect(abs(scale.callPosition(for: 10) - (1.0 / 3.0)) < 0.000_001)
-        #expect(scale.turnLabel(at: 0.5) == 100)
-        #expect(scale.callLabel(at: 1) == 1_000)
+        #expect(abs(small - 8) < 0.000_001)
+        #expect(medium > small)
+        #expect(large > medium)
+        #expect(abs(large - 22) < 0.000_001)
     }
 
     @Test
@@ -150,6 +157,24 @@ struct TimelinePresentationTests {
 
         #expect(point.turnTotalReasoningTokens == 624)
         #expect(point.reasoningSamples.map(\.reasoningTokens) == [8, 516, 100])
+    }
+
+    @Test
+    func turnNodeTotalTokensUsesReportedTurnTotal() throws {
+        let item = session(
+            thread: "a",
+            turn: "tokens",
+            at: "2026-07-10T09:50:00.000Z",
+            reasoning: 400,
+            totalTokens: 120_000
+        )
+        let point = TimelinePoint(
+            id: "a:tokens",
+            session: item,
+            timestamp: try #require(item.completedAt)
+        )
+
+        #expect(point.turnTotalTokens == 120_000)
     }
 
     @Test
@@ -226,7 +251,8 @@ struct TimelinePresentationTests {
         reasoning: Int,
         isLive: Bool = false,
         preview: String = "preview",
-        sampleReasoning: [Int] = []
+        sampleReasoning: [Int] = [],
+        totalTokens: Int = 0
     ) -> CompletedSession {
         let date = date(timestamp)
         return CompletedSession(
@@ -245,7 +271,10 @@ struct TimelinePresentationTests {
             usage: TurnUsage(reasoningOutputTokens: reasoning),
             tokenUsage: TurnTokenUsageSnapshot(
                 last: TurnUsage(reasoningOutputTokens: reasoning),
-                total: TurnUsage(reasoningOutputTokens: reasoning * 2)
+                total: TurnUsage(
+                    reasoningOutputTokens: reasoning * 2,
+                    totalTokens: totalTokens
+                )
             ),
             monitorState: isLive ? .running : .normal,
             signalState: .valid,

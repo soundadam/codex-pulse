@@ -60,6 +60,94 @@ struct RolloutParserTests {
         #expect(parsed.latestTurn?.turnId == "turn-2")
     }
 
+    @Test
+    func reparsesWhenHistoryWindowExpandsBeyondCachedDetailCutoff() async throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let rolloutURL = directoryURL.appendingPathComponent("rollout.jsonl")
+        try """
+        {"type":"turn_context","timestamp":"2026-07-09T00:00:00.000Z","payload":{"turn_id":"old"}}
+        {"type":"event_msg","timestamp":"2026-07-09T00:00:01.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"reasoning_output_tokens":100}}}}
+        {"type":"event_msg","timestamp":"2026-07-09T00:00:02.000Z","payload":{"type":"task_complete"}}
+        {"type":"turn_context","timestamp":"2026-07-09T02:00:00.000Z","payload":{"turn_id":"new"}}
+        {"type":"event_msg","timestamp":"2026-07-09T02:00:01.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"reasoning_output_tokens":200}}}}
+        {"type":"event_msg","timestamp":"2026-07-09T02:00:02.000Z","payload":{"type":"task_complete"}}
+        """.write(to: rolloutURL, atomically: true, encoding: .utf8)
+
+        let parser = RolloutParser()
+        let recent = try await parser.parse(
+            path: rolloutURL.path,
+            detailCutoff: date("2026-07-09T01:00:00.000Z")
+        )
+        #expect(recent.turns[0].reasoningSamples.isEmpty)
+        #expect(recent.turns[1].reasoningSamples.count == 1)
+
+        let expanded = try await parser.parse(
+            path: rolloutURL.path,
+            detailCutoff: date("2026-07-08T23:00:00.000Z")
+        )
+        #expect(expanded.turns.map { $0.reasoningSamples.count } == [1, 1])
+    }
+
+    @Test
+    func streamsLinesAcrossReadChunkBoundaries() async throws {
+        let rolloutURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("jsonl")
+        defer { try? FileManager.default.removeItem(at: rolloutURL) }
+        let largeMessage = String(repeating: "x", count: 300_000)
+        let contents = """
+        {"type":"turn_context","timestamp":"2026-07-09T00:00:00.000Z","payload":{"turn_id":"chunked"}}
+        {"type":"response_item","timestamp":"2026-07-09T00:00:01.000Z","payload":{"type":"message","content":[{"type":"output_text","text":"\(largeMessage)"}]}}
+        {"type":"event_msg","timestamp":"2026-07-09T00:00:02.000Z","payload":{"type":"task_complete"}}
+        """
+        try contents.write(to: rolloutURL, atomically: true, encoding: .utf8)
+
+        let parsed = try await RolloutParser().parse(path: rolloutURL.path)
+
+        #expect(parsed.latestTurn?.turnId == "chunked")
+        #expect(parsed.latestTurn?.status == .completed)
+        #expect(parsed.latestTurn?.lastAgentMessage?.count == largeMessage.count)
+    }
+
+    @Test
+    func incrementallyParsesValidatedFileAppends() async throws {
+        let rolloutURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("jsonl")
+        defer { try? FileManager.default.removeItem(at: rolloutURL) }
+        let initial = """
+        {"type":"turn_context","timestamp":"2026-07-09T00:00:00.000Z","payload":{"turn_id":"appended"}}
+        {"type":"event_msg","timestamp":"2026-07-09T00:00:01.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"reasoning_output_tokens":100}}}}
+        """ + "\n"
+        try initial.write(to: rolloutURL, atomically: true, encoding: .utf8)
+
+        let parser = RolloutParser()
+        let first = try await parser.parse(path: rolloutURL.path)
+        #expect(first.latestTurn?.reasoningSamples.map(\.reasoningOutputTokens) == [100])
+
+        let handle = try FileHandle(forWritingTo: rolloutURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(
+            """
+            {"type":"event_msg","timestamp":"2026-07-09T00:00:02.000Z","payload":{"type":"token_count","info":{"last_token_usage":{"reasoning_output_tokens":40}}}}
+            {"type":"event_msg","timestamp":"2026-07-09T00:00:03.000Z","payload":{"type":"task_complete"}}
+
+            """.utf8
+        ))
+        try handle.close()
+
+        let second = try await parser.parse(path: rolloutURL.path)
+
+        #expect(second.latestTurn?.status == .completed)
+        #expect(second.latestTurn?.usage.reasoningOutputTokens == 140)
+        #expect(second.latestTurn?.reasoningSamples.map(\.reasoningOutputTokens) == [100, 40])
+        #expect(await parser.fullFileParseCount == 1)
+        #expect(await parser.incrementalFileParseCount == 1)
+    }
+
     private func date(_ text: String) -> Date {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

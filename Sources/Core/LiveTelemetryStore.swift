@@ -3,23 +3,17 @@ import Foundation
 public struct LiveTelemetryConfiguration: Sendable, Equatable {
     public let suspiciousModulo: Int
     public let lookbackSeconds: TimeInterval
-    public let overviewSampleMinimumInterval: TimeInterval
-    public let overviewSampleReasoningStep: Int
     public let overviewSessionLimit: Int
     public let sampleLimitPerTurn: Int
 
     public init(
         suspiciousModulo: Int = 516,
         lookbackSeconds: TimeInterval = 3_600,
-        overviewSampleMinimumInterval: TimeInterval = 2,
-        overviewSampleReasoningStep: Int = 128,
         overviewSessionLimit: Int = 30,
         sampleLimitPerTurn: Int = 240
     ) {
         self.suspiciousModulo = suspiciousModulo
         self.lookbackSeconds = lookbackSeconds
-        self.overviewSampleMinimumInterval = overviewSampleMinimumInterval
-        self.overviewSampleReasoningStep = overviewSampleReasoningStep
         self.overviewSessionLimit = max(1, overviewSessionLimit)
         self.sampleLimitPerTurn = max(1, sampleLimitPerTurn)
     }
@@ -119,7 +113,18 @@ public struct LiveTelemetryStore: Sendable {
             modelContextWindow: update.modelContextWindow,
             hitInvalidSignal: signalState == .invalid
         )
-        samplesByTurnKey[turnKey, default: []].append(sample)
+        var turnSamples = samplesByTurnKey[turnKey] ?? []
+        turnSamples.append(sample)
+        let cutoff = referenceDate.addingTimeInterval(-configuration.lookbackSeconds)
+        turnSamples.removeAll { $0.observedAt < cutoff }
+        if turnSamples.count > 1,
+           turnSamples[turnSamples.count - 2].observedAt > sample.observedAt {
+            turnSamples.sort(by: Self.sampleDateAscending)
+        }
+        if turnSamples.count > configuration.sampleLimitPerTurn {
+            turnSamples = Array(turnSamples.suffix(configuration.sampleLimitPerTurn))
+        }
+        samplesByTurnKey[turnKey] = turnSamples
 
         appendOverviewSession(
             CompletedSession(
@@ -149,7 +154,7 @@ public struct LiveTelemetryStore: Sendable {
             )
         )
 
-        prune(referenceDate: referenceDate)
+        pruneOverview(referenceDate: referenceDate)
     }
 
     public mutating func reconcile(completedSessions: [CompletedSession]) {
@@ -163,13 +168,8 @@ public struct LiveTelemetryStore: Sendable {
     }
 
     public mutating func prune(referenceDate: Date) {
+        pruneOverview(referenceDate: referenceDate)
         let cutoff = referenceDate.addingTimeInterval(-configuration.lookbackSeconds)
-        overviewSessions.removeAll {
-            ($0.completedAt ?? $0.startedAt ?? .distantPast) < cutoff
-        }
-        if overviewSessions.count > configuration.overviewSessionLimit {
-            overviewSessions = Array(overviewSessions.suffix(configuration.overviewSessionLimit))
-        }
 
         samplesByTurnKey = samplesByTurnKey.reduce(into: [:]) { result, entry in
             let samples = entry.value
@@ -222,7 +222,7 @@ public struct LiveTelemetryStore: Sendable {
     }
 
     public func samples(forTurnKey turnKey: String) -> [LiveTurnSample] {
-        (samplesByTurnKey[turnKey] ?? []).sorted(by: Self.sampleDateAscending)
+        samplesByTurnKey[turnKey] ?? []
     }
 
     public func sampleBuckets(forThreadID threadID: String) -> [String: [LiveTurnSample]] {
@@ -230,7 +230,7 @@ public struct LiveTelemetryStore: Sendable {
             guard entry.value.first?.threadId == threadID else {
                 return
             }
-            result[entry.key] = entry.value.sorted(by: Self.sampleDateAscending)
+            result[entry.key] = entry.value
         }
     }
 
@@ -245,37 +245,22 @@ public struct LiveTelemetryStore: Sendable {
     }
 
     private mutating func appendOverviewSession(_ next: CompletedSession) {
-        if let index = overviewSessions.lastIndex(where: {
+        if let index = overviewSessions.firstIndex(where: {
             $0.threadId == next.threadId && $0.turnId == next.turnId
         }) {
-            let previous = overviewSessions.remove(at: index)
-            if shouldKeep(previous: previous, before: next) {
-                overviewSessions.append(previous)
-            }
+            overviewSessions.remove(at: index)
         }
         overviewSessions.append(next)
     }
 
-    private func shouldKeep(previous: CompletedSession, before next: CompletedSession) -> Bool {
-        if previous.isInvalidReasoning != next.isInvalidReasoning {
-            return true
+    private mutating func pruneOverview(referenceDate: Date) {
+        let cutoff = referenceDate.addingTimeInterval(-configuration.lookbackSeconds)
+        overviewSessions.removeAll {
+            ($0.completedAt ?? $0.startedAt ?? .distantPast) < cutoff
         }
-
-        let previousTime = previous.completedAt ?? previous.startedAt ?? .distantPast
-        let nextTime = next.completedAt ?? next.startedAt ?? .distantPast
-        if nextTime.timeIntervalSince(previousTime) >= configuration.overviewSampleMinimumInterval {
-            return true
+        if overviewSessions.count > configuration.overviewSessionLimit {
+            overviewSessions = Array(overviewSessions.suffix(configuration.overviewSessionLimit))
         }
-
-        let lastDelta = abs(
-            next.tokenUsage.last.reasoningOutputTokens
-                - previous.tokenUsage.last.reasoningOutputTokens
-        )
-        let totalDelta = abs(
-            next.tokenUsage.total.reasoningOutputTokens
-                - previous.tokenUsage.total.reasoningOutputTokens
-        )
-        return max(lastDelta, totalDelta) >= configuration.overviewSampleReasoningStep
     }
 
     private static func turnKey(threadID: String, turnID: String) -> String {

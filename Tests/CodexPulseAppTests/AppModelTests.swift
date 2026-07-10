@@ -59,6 +59,14 @@ struct AppModelTests {
         #expect(model.recentReasoningSessions.first?.signalState == .unknown)
         #expect(model.selectedCompletedSession == nil)
         #expect(model.selectedThreadID == nil)
+        #expect(model.snapshot?.completedSessions.first?.reasoningSamples.isEmpty == true)
+
+        model.selectTimelinePoint("thread-1:turn-1")
+        try await eventually {
+            model.selectedTurnReasoningSamples.count == 1
+                && model.isLoadingSelectedTurnDetails == false
+        }
+        #expect(model.selectedTurnReasoningSamples.first?.reasoningOutputTokens == 516)
     }
 
     @Test
@@ -106,7 +114,46 @@ struct AppModelTests {
     }
 
     @Test
-    func sendsRealtimeSubscriptionsToIndependentService() async throws {
+    func equivalentPollingRefreshDoesNotRepublishTimelinePresentation() async throws {
+        let rolloutURL = try writeCompletedRollout(reasoning: 240)
+        let discovery = ToggleThreadDiscoveryService(
+            threads: [
+                CodexThreadRef(
+                    id: "thread-stable",
+                    name: "Stable thread",
+                    preview: "unchanged",
+                    source: "cli",
+                    cwd: "/tmp/stable-project",
+                    rolloutPath: rolloutURL.path,
+                    updatedAt: Self.date("2026-07-09T00:00:05.000Z")
+                )
+            ]
+        )
+        let model = AppModel(
+            discoveryService: discovery,
+            rolloutParser: RolloutParser(),
+            notificationSender: MockNotificationSender(),
+            notificationStore: InMemoryNotificationStore(),
+            nowProvider: { Self.date("2026-07-09T00:30:00.000Z") }
+        )
+
+        model.refreshNow()
+        try await eventuallyAsync {
+            await discovery.callCount == 1 && model.timelinePresentationRevision > 0
+        }
+        let firstRevision = model.timelinePresentationRevision
+
+        model.refreshNow()
+        try await eventuallyAsync {
+            await discovery.callCount == 2 && model.isRefreshing == false
+        }
+
+        #expect(model.timelinePresentationRevision == firstRevision)
+        #expect(model.timelinePoints.map(\.id) == ["thread-stable:turn-1"])
+    }
+
+    @Test
+    func sendsRealtimeSubscriptionsToConfiguredService() async throws {
         let rolloutURL = try writeCompletedRollout()
         let thread = CodexThreadRef(
             id: "thread-1",
@@ -139,7 +186,7 @@ struct AppModelTests {
     }
 
     @Test
-    func timelineFocusResetsAndNormalizesWhenWindowHidesSelection() async throws {
+    func timelineFocusResetsAndNormalizesWhenBaseWindowHidesSelection() async throws {
         let rolloutURL = try writeCompletedRollout(reasoning: 120)
         let discovery = MockThreadDiscoveryService(
             threads: [
@@ -159,10 +206,10 @@ struct AppModelTests {
             rolloutParser: RolloutParser(),
             notificationSender: MockNotificationSender(),
             notificationStore: InMemoryNotificationStore(),
-            nowProvider: { Self.date("2026-07-09T00:20:00.000Z") }
+            nowProvider: { Self.date("2026-07-09T02:00:00.000Z") }
         )
 
-        model.refreshNow()
+        model.setTimelineWindow(.threeHours)
         try await eventually {
             model.timelinePoints.count == 1
         }
@@ -174,12 +221,12 @@ struct AppModelTests {
         model.selectTimelinePoint("thread-1:turn-1")
         #expect(model.selectedTimelinePoint?.id == "thread-1:turn-1")
 
-        model.setTimelineWindow(.fifteenMinutes)
+        model.setTimelineWindow(.oneHour)
         #expect(model.timelinePoints.isEmpty)
         #expect(model.selectedThreadID == nil)
         #expect(model.selectedTimelinePoint == nil)
 
-        model.setTimelineWindow(.thirtyMinutes)
+        model.setTimelineWindow(.threeHours)
         model.selectThreadLine("thread-1")
         model.resetTimelineFocus()
         #expect(model.selectedThreadID == nil)
@@ -392,8 +439,6 @@ struct AppModelTests {
             notificationSender: MockNotificationSender(),
             notificationStore: InMemoryNotificationStore(),
             refreshInterval: .seconds(3_600),
-            liveSampleMinimumInterval: 2,
-            liveSampleReasoningStep: 128,
             nowProvider: { now }
         )
 

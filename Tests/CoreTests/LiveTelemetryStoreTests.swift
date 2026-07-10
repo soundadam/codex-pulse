@@ -86,8 +86,6 @@ struct LiveTelemetryStoreTests {
             configuration: LiveTelemetryConfiguration(
                 suspiciousModulo: 516,
                 lookbackSeconds: 3_600,
-                overviewSampleMinimumInterval: 2,
-                overviewSampleReasoningStep: 128,
                 overviewSessionLimit: 24,
                 sampleLimitPerTurn: 240
             )

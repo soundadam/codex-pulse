@@ -8,25 +8,26 @@ struct InspectorRootView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            InspectorHeader(model: model)
                 .padding(.horizontal, 12)
                 .frame(height: 48)
 
             Divider()
                 .opacity(0.55)
 
-            toolbar
-                .padding(.horizontal, 12)
-                .frame(height: 40)
-
             if let message = model.errorBannerMessage {
                 CompactErrorBanner(message: message)
                     .padding(.horizontal, 14)
+                    .padding(.top, 8)
                     .padding(.bottom, 8)
             }
 
-            timelineContent
+            InspectorTimelineContent(
+                model: model,
+                hasErrorBanner: model.errorBannerMessage != nil
+            )
                 .padding(.horizontal, 12)
+                .padding(.top, model.errorBannerMessage == nil ? 8 : 0)
                 .padding(.bottom, 10)
         }
         .frame(width: 760, height: 520, alignment: .topLeading)
@@ -42,7 +43,14 @@ struct InspectorRootView: View {
         )
     }
 
-    private var header: some View {
+}
+
+/// Header observation is intentionally isolated from the chart. Polling state
+/// and the minute label can update without invalidating Swift Charts.
+private struct InspectorHeader: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
         HStack(spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -109,144 +117,6 @@ struct InspectorRootView: View {
         }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Search projects or threads", text: $model.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                if model.searchQuery.isEmpty == false {
-                    Button {
-                        model.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(PulsePalette.surface)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07))
-            }
-
-            Picker(
-                "Time window",
-                selection: Binding(
-                    get: { model.selectedTimelineWindow },
-                    set: { model.setTimelineWindow($0) }
-                )
-            ) {
-                ForEach(TimelineWindow.allCases) { window in
-                    Text(window.shortLabel)
-                        .tag(window)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 166)
-        }
-    }
-
-    @ViewBuilder
-    private var timelineContent: some View {
-        if model.timelineSeries.isEmpty {
-            ContentUnavailableView(
-                model.searchQuery.isEmpty ? "No turns in this window" : "No matching threads",
-                systemImage: "chart.xyaxis.line",
-                description: Text(model.searchQuery.isEmpty
-                    ? "Live and completed turns will appear on the timeline."
-                    : "Try a project name, thread title, model, or preview text.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .pulseSurface()
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                chartHeading
-
-                MultiThreadTimelineChart(model: model)
-                    .frame(
-                        maxWidth: .infinity,
-                        minHeight: chartMinimumHeight,
-                        maxHeight: .infinity
-                    )
-                    .layoutPriority(1)
-
-                if let point = model.selectedTimelinePoint {
-                    ReasoningTurnInspector(
-                        point: point,
-                        openRollout: model.openSelectedRollout
-                    )
-                    .frame(height: 126)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            .padding(10)
-            .pulseSurface()
-            .animation(.easeOut(duration: 0.16), value: model.selectedSessionKey)
-        }
-    }
-
-    private var chartHeading: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("MULTI-THREAD · \(model.selectedTimelineWindow.shortLabel.uppercased())")
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.8)
-                    .foregroundStyle(PulsePalette.accent)
-                Text("Turn total (L) · model call (R)")
-                    .font(.caption.weight(.semibold))
-            }
-
-            Spacer()
-
-            if let selectedSeries = model.selectedThreadSeries {
-                HStack(spacing: 6) {
-                    Capsule(style: .continuous)
-                        .fill(seriesColor(selectedSeries))
-                        .frame(width: 20, height: 4)
-                    Text(selectedSeries.shortLabel)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .font(.system(size: 9.5, weight: .bold))
-                .padding(.horizontal, 8)
-                .frame(height: 20)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(seriesColor(selectedSeries).opacity(0.16))
-                )
-            } else {
-                Text("\(model.timelinePoints.count) turns · click line to focus · double-click to reset")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(height: 26)
-    }
-
-    private func seriesColor(_ series: ThreadTimelineSeries) -> Color {
-        PulsePalette.seriesColors[series.colorIndex % PulsePalette.seriesColors.count]
-    }
-
-    private var chartMinimumHeight: CGFloat {
-        if model.selectedTimelinePoint != nil {
-            return model.errorBannerMessage == nil ? 220 : 180
-        }
-        return model.errorBannerMessage == nil ? 260 : 220
-    }
-
     private var lastRefreshLabel: String {
         guard let lastRefreshAt = model.lastRefreshAt else {
             return "waiting"
@@ -269,99 +139,111 @@ struct InspectorRootView: View {
     }
 }
 
-private struct MultiThreadTimelineChart: View {
+/// Timeline observation is isolated from header polling state. The chart only
+/// changes for a new immutable presentation or an explicit selection change.
+private struct InspectorTimelineContent: View {
+    @Bindable var model: AppModel
+    let hasErrorBanner: Bool
+
+    @ViewBuilder
+    var body: some View {
+        if model.timelineSeries.isEmpty {
+            ContentUnavailableView(
+                "No turns in this window",
+                systemImage: "chart.xyaxis.line",
+                description: Text("Live and completed turns will appear on the timeline.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .pulseSurface()
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                MultiThreadTimelineChart(
+                    presentation: model.timelinePresentation,
+                    window: model.selectedTimelineWindow,
+                    selectedThreadID: model.selectedThreadID,
+                    selectedSessionKey: model.selectedSessionKey,
+                    selectWindow: model.setTimelineWindow,
+                    selectThread: model.selectThreadLine,
+                    selectPoint: model.selectTimelinePoint,
+                    resetFocus: model.resetTimelineFocus
+                )
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: chartMinimumHeight,
+                        maxHeight: .infinity
+                    )
+                    .layoutPriority(1)
+
+                if model.selectedTimelinePoint != nil {
+                    SelectedTurnInspectorPane(model: model)
+                    .frame(height: 134)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .padding(10)
+            .pulseSurface()
+            .animation(.easeOut(duration: 0.16), value: model.selectedSessionKey)
+        }
+    }
+
+    private var chartMinimumHeight: CGFloat {
+        if model.selectedTimelinePoint != nil {
+            return hasErrorBanner ? 172 : 204
+        }
+        return hasErrorBanner ? 220 : 260
+    }
+}
+
+/// Lazy detail loading and model-call samples update this subtree only, keeping
+/// the much more expensive main chart stable.
+private struct SelectedTurnInspectorPane: View {
     @Bindable var model: AppModel
 
+    @ViewBuilder
     var body: some View {
-        let scale = dualScale
+        if let point = model.selectedTimelinePoint {
+            ReasoningTurnInspector(
+                point: point,
+                reasoningSamples: model.selectedTurnReasoningSamples,
+                isLoadingDetails: model.isLoadingSelectedTurnDetails,
+                openRollout: model.openSelectedRollout
+            )
+        }
+    }
+}
 
+private struct MultiThreadTimelineChart: View {
+    let presentation: TimelinePresentation
+    let window: TimelineWindow
+    let selectedThreadID: String?
+    let selectedSessionKey: String?
+    let selectWindow: (TimelineWindow) -> Void
+    let selectThread: (String) -> Void
+    let selectPoint: (String) -> Void
+    let resetFocus: () -> Void
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ThreadChartLegend(
-                series: model.timelineSeries,
-                selectedThreadID: model.selectedThreadID,
-                selectThread: model.selectThreadLine
+                series: presentation.series,
+                window: window,
+                selectWindow: selectWindow,
+                selectedThreadID: selectedThreadID,
+                selectThread: selectThread
             )
 
             Chart {
-                // Layer 1: per-call traces. The Turn ID is the series key, so
-                // these lines can never bridge two Turns.
-                ForEach(model.timelineSeries) { series in
-                    ForEach(series.points) { point in
-                        if point.session.reasoningSamples.count > 1 {
-                            ForEach(point.displayedReasoningSamples) { sample in
-                                LineMark(
-                                    x: .value("Sample time", sample.timestamp),
-                                    y: .value(
-                                        "Call reasoning axis",
-                                        scale.callPosition(for: sample.reasoningTokens)
-                                    ),
-                                    series: .value("Turn call trace", point.callTraceSeriesID)
-                                )
-                                .interpolationMethod(.monotone)
-                                .lineStyle(
-                                    StrokeStyle(
-                                        lineWidth: sampleLineWidth(for: series.threadID),
-                                        lineCap: .round,
-                                        lineJoin: .round
-                                    )
-                                )
-                                .foregroundStyle(
-                                    seriesColor(for: series).opacity(sampleOpacity(for: series.threadID))
-                                )
-
-                                PointMark(
-                                    x: .value("Sample time", sample.timestamp),
-                                    y: .value(
-                                        "Call reasoning axis",
-                                        scale.callPosition(for: sample.reasoningTokens)
-                                    )
-                                )
-                                .symbolSize(model.selectedThreadID == series.threadID ? 8 : 4)
-                                .foregroundStyle(
-                                    seriesColor(for: series).opacity(samplePointOpacity(for: series.threadID))
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Layer 2: selected Thread glow, aligned only to Turn-total nodes.
-                ForEach(model.timelineSeries) { series in
-                    if model.selectedThreadID == series.threadID {
-                        ForEach(series.points) { point in
-                            LineMark(
-                                x: .value("Turn time", point.timestamp),
-                                y: .value(
-                                    "Turn total axis",
-                                    scale.turnPosition(for: point.turnTotalReasoningTokens)
-                                ),
-                                series: .value("Selected Turn-total Thread", series.threadID)
-                            )
-                            .interpolationMethod(.monotone)
-                            .lineStyle(
-                                StrokeStyle(
-                                    lineWidth: 12,
-                                    lineCap: .round,
-                                    lineJoin: .round
-                                )
-                            )
-                            .foregroundStyle(seriesColor(for: series).opacity(0.26))
-                        }
-                    }
-                }
-
-                // Layer 3: cross-Turn backbone. Only large Turn-total nodes feed it.
-                ForEach(model.timelineSeries) { series in
+                ForEach(presentation.series) { series in
                     ForEach(series.points) { point in
                         LineMark(
                             x: .value("Turn time", point.timestamp),
                             y: .value(
-                                "Turn total axis",
-                                scale.turnPosition(for: point.turnTotalReasoningTokens)
+                                "Turn reasoning",
+                                TimelineLogScale.plotValue(point.turnTotalReasoningTokens)
                             ),
-                            series: .value("Turn-total Thread", series.threadID)
+                            series: .value("Thread", series.threadID)
                         )
-                        .interpolationMethod(.monotone)
+                        .interpolationMethod(.linear)
                         .lineStyle(
                             StrokeStyle(
                                 lineWidth: lineWidth(for: series.threadID),
@@ -375,14 +257,13 @@ private struct MultiThreadTimelineChart: View {
                     }
                 }
 
-                // Layer 4: interactive Turn-total nodes stay above every call trace.
-                ForEach(model.timelineSeries) { series in
+                ForEach(presentation.series) { series in
                     ForEach(series.points) { point in
                         PointMark(
                             x: .value("Turn time", point.timestamp),
                             y: .value(
-                                "Turn total axis",
-                                scale.turnPosition(for: point.turnTotalReasoningTokens)
+                                "Turn reasoning",
+                                TimelineLogScale.plotValue(point.turnTotalReasoningTokens)
                             )
                         )
                         .foregroundStyle(.clear)
@@ -390,15 +271,16 @@ private struct MultiThreadTimelineChart: View {
                             TimelinePointSymbol(
                                 point: point,
                                 seriesColor: seriesColor(for: series),
-                                isSelected: point.id == model.selectedSessionKey,
+                                diameter: presentation.nodeSizeScale.diameter(for: point.turnTotalTokens),
+                                isSelected: point.id == selectedSessionKey,
                                 opacity: pointOpacity(for: series.threadID)
                             )
                         }
                     }
                 }
             }
-            .chartXScale(domain: model.timelineDomain)
-            .chartYScale(domain: 0.0...1.0)
+            .chartXScale(domain: presentation.dateDomain)
+            .chartYScale(domain: presentation.reasoningDomain, type: .log)
             .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 4)) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
@@ -413,28 +295,16 @@ private struct MultiThreadTimelineChart: View {
                 }
             }
             .chartYAxis {
-                AxisMarks(position: .leading, values: scale.turnTickPositions) { value in
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 5)) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
                         .foregroundStyle(.secondary.opacity(0.14))
                     AxisTick(stroke: StrokeStyle(lineWidth: 0.7))
                         .foregroundStyle(.secondary.opacity(0.45))
                     AxisValueLabel {
-                        if let position = value.as(Double.self) {
-                            Text(numberText(scale.turnLabel(at: position)))
+                        if let tokens = value.as(Double.self) {
+                            Text(numberText(Int(tokens.rounded())))
                                 .font(.system(size: 9.5, design: .monospaced))
                                 .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                AxisMarks(position: .trailing, values: scale.callTickPositions) { value in
-                    AxisTick(stroke: StrokeStyle(lineWidth: 0.7))
-                        .foregroundStyle(PulsePalette.accent.opacity(0.55))
-                    AxisValueLabel {
-                        if let position = value.as(Double.self) {
-                            Text(numberText(scale.callLabel(at: position)))
-                                .font(.system(size: 9.5, design: .monospaced))
-                                .foregroundStyle(PulsePalette.accent.opacity(0.82))
                         }
                     }
                 }
@@ -449,63 +319,41 @@ private struct MultiThreadTimelineChart: View {
                         let plotFrame = geometry[plotAnchor]
                         ChartClickCapture { location, clickCount in
                             if clickCount >= 2 {
-                                model.resetTimelineFocus()
+                                resetFocus()
                             } else {
                                 handleSingleTap(location: location, proxy: proxy)
                             }
                         }
-                            .frame(width: plotFrame.width, height: plotFrame.height)
-                            .position(x: plotFrame.midX, y: plotFrame.midY)
+                        .frame(width: plotFrame.width, height: plotFrame.height)
+                        .position(x: plotFrame.midX, y: plotFrame.midY)
                     }
                 }
             }
-
         }
-        .accessibilityLabel("Reasoning timeline grouped by thread")
-        .animation(.easeOut(duration: 0.16), value: model.selectedThreadID)
-    }
-
-    private var dualScale: TimelineDualLogScale {
-        TimelineDualLogScale(
-            turnValues: model.timelinePoints.map(\.turnTotalReasoningTokens),
-            callValues: model.timelinePoints.flatMap { point in
-                point.reasoningSamples.map(\.reasoningTokens)
-            }
-        )
+        .accessibilityLabel("Turn reasoning timeline grouped by thread")
+        .animation(.easeOut(duration: 0.16), value: selectedThreadID)
     }
 
     private func handleSingleTap(
         location: CGPoint,
         proxy: ChartProxy
     ) {
-        let scale = dualScale
-        let renderedSeries = model.timelineSeries.map { series in
-            TimelineRenderedSeries(
-                threadID: series.threadID,
-                points: series.points.compactMap { point in
-                    guard let x = proxy.position(forX: point.timestamp),
-                          let y = proxy.position(
-                            forY: scale.turnPosition(for: point.turnTotalReasoningTokens)
-                          ) else {
-                        return nil
-                    }
-                    return TimelineRenderedPoint(
-                        pointID: point.id,
-                        position: CGPoint(x: x, y: y)
-                    )
-                },
-                lineRuns: series.points.compactMap { point in
-                    let positions = point.displayedReasoningSamples.compactMap { sample -> CGPoint? in
-                        guard let x = proxy.position(forX: sample.timestamp),
-                              let y = proxy.position(
-                                forY: scale.callPosition(for: sample.reasoningTokens)
-                              ) else {
-                            return nil
-                        }
-                        return CGPoint(x: x, y: y)
-                    }
-                    return positions.count > 1 ? positions : nil
+        let renderedSeries = presentation.series.map { series in
+            let renderedPoints = series.points.compactMap { point -> TimelineRenderedPoint? in
+                guard let x = proxy.position(forX: point.timestamp),
+                      let y = proxy.position(
+                        forY: TimelineLogScale.plotValue(point.turnTotalReasoningTokens)
+                      ) else {
+                    return nil
                 }
+                return TimelineRenderedPoint(
+                    pointID: point.id,
+                    position: CGPoint(x: x, y: y)
+                )
+            }
+            return TimelineRenderedSeries(
+                threadID: series.threadID,
+                points: renderedPoints
             )
         }
 
@@ -513,12 +361,12 @@ private struct MultiThreadTimelineChart: View {
             location: location,
             series: renderedSeries,
             nodeRadius: 18,
-            lineTolerance: 15
+            lineTolerance: 11
         ) {
         case let .point(pointID):
-            model.selectTimelinePoint(pointID)
+            selectPoint(pointID)
         case let .thread(threadID):
-            model.selectThreadLine(threadID)
+            selectThread(threadID)
         case nil:
             break
         }
@@ -529,86 +377,104 @@ private struct MultiThreadTimelineChart: View {
     }
 
     private func lineWidth(for threadID: String) -> CGFloat {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 3.4
+        guard let selectedThreadID else {
+            return 1.8
         }
-        return selectedThreadID == threadID ? 5.6 : 1.2
+        return selectedThreadID == threadID ? 3.2 : 0.9
     }
 
     private func lineOpacity(for threadID: String) -> Double {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 0.90
+        guard let selectedThreadID else {
+            return 0.72
         }
-        return selectedThreadID == threadID ? 1 : 0.10
+        return selectedThreadID == threadID ? 0.96 : 0.10
     }
 
     private func pointOpacity(for threadID: String) -> Double {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 0.78
+        guard let selectedThreadID else {
+            return 0.86
         }
         return selectedThreadID == threadID ? 0.94 : 0.14
-    }
-
-    private func sampleLineWidth(for threadID: String) -> CGFloat {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 0.8
-        }
-        return selectedThreadID == threadID ? 1.35 : 0.5
-    }
-
-    private func sampleOpacity(for threadID: String) -> Double {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 0.26
-        }
-        return selectedThreadID == threadID ? 0.56 : 0.045
-    }
-
-    private func samplePointOpacity(for threadID: String) -> Double {
-        guard let selectedThreadID = model.selectedThreadID else {
-            return 0.30
-        }
-        return selectedThreadID == threadID ? 0.62 : 0.055
     }
 }
 
 private struct ThreadChartLegend: View {
     let series: [ThreadTimelineSeries]
+    let window: TimelineWindow
+    let selectWindow: (TimelineWindow) -> Void
     let selectedThreadID: String?
     let selectThread: (String) -> Void
 
+    @State private var showsWindowPicker = false
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: series.count > 3) {
-            LazyHStack(spacing: 5) {
-                ForEach(series) { item in
-                    Button {
-                        selectThread(item.threadID)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Capsule(style: .continuous)
-                                .fill(seriesColor(item))
-                                .frame(width: 20, height: selectedThreadID == item.threadID ? 4 : 3)
-                            Text(item.threadTitle)
-                                .font(.system(size: 9.5, weight: selectedThreadID == item.threadID ? .bold : .medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .frame(maxWidth: 150)
+        HStack(spacing: 8) {
+            Button {
+                showsWindowPicker.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("TURN")
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text(window.shortLabel.uppercased())
+                        .fontDesign(.monospaced)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(PulsePalette.accent)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .popover(isPresented: $showsWindowPicker, arrowEdge: .top) {
+                TimelineWindowWheel(
+                    selection: window,
+                    selectWindow: selectWindow
+                )
+            }
+            .help("Scroll to expand history. Longer windows use more resources.")
+
+            Divider()
+                .frame(height: 15)
+
+            ScrollView(.horizontal, showsIndicators: series.count > 3) {
+                LazyHStack(spacing: 5) {
+                    ForEach(series) { item in
+                        Button {
+                            selectThread(item.threadID)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Capsule(style: .continuous)
+                                    .fill(seriesColor(item))
+                                    .frame(width: 18, height: selectedThreadID == item.threadID ? 4 : 3)
+                                Text(item.shortLabel)
+                                    .font(.system(size: 9.5, weight: selectedThreadID == item.threadID ? .bold : .medium))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .frame(maxWidth: 190)
+                            }
+                            .foregroundStyle(itemForegroundStyle(item))
+                            .opacity(itemOpacity(item))
+                            .padding(.horizontal, 5)
+                            .frame(height: 20)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(selectedThreadID == item.threadID
+                                        ? seriesColor(item).opacity(0.20)
+                                        : Color.clear)
+                            )
                         }
-                        .padding(.horizontal, 5)
-                        .frame(height: 20)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                .fill(selectedThreadID == item.threadID
-                                    ? seriesColor(item).opacity(0.22)
-                                    : Color.clear)
-                        )
+                        .buttonStyle(.plain)
+                        .help(item.shortLabel)
                     }
-                    .buttonStyle(.plain)
-                    .help(item.shortLabel)
                 }
             }
+            .contentMargins(.horizontal, 2, for: .scrollContent)
         }
-        .contentMargins(.horizontal, 5, for: .scrollContent)
+        .padding(.horizontal, 7)
         .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay {
@@ -619,6 +485,110 @@ private struct ThreadChartLegend: View {
 
     private func seriesColor(_ item: ThreadTimelineSeries) -> Color {
         PulsePalette.seriesColors[item.colorIndex % PulsePalette.seriesColors.count]
+    }
+
+    private func itemOpacity(_ item: ThreadTimelineSeries) -> Double {
+        guard let selectedThreadID else {
+            return 0.88
+        }
+        return selectedThreadID == item.threadID ? 1 : 0.36
+    }
+
+    private func itemForegroundStyle(_ item: ThreadTimelineSeries) -> Color {
+        guard let selectedThreadID else {
+            return Color.primary
+        }
+        return selectedThreadID == item.threadID ? Color.primary : Color.secondary
+    }
+}
+
+private struct TimelineWindowWheel: View {
+    let selection: TimelineWindow
+    let selectWindow: (TimelineWindow) -> Void
+
+    @State private var scrollSelection: TimelineWindow?
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("HISTORY")
+                .font(.system(size: 8.5, weight: .bold))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(PulsePalette.accent.opacity(0.10))
+                    .frame(height: 28)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(PulsePalette.accent.opacity(0.28), lineWidth: 1)
+                    }
+
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(TimelineWindow.allCases) { window in
+                            Text(window.shortLabel)
+                                .font(
+                                    .system(
+                                        size: scrollSelection == window ? 14 : 11,
+                                        weight: scrollSelection == window ? .bold : .medium,
+                                        design: .monospaced
+                                    )
+                                )
+                                .foregroundStyle(
+                                    scrollSelection == window
+                                        ? Color.primary
+                                        : Color.secondary.opacity(0.62)
+                                )
+                                .scaleEffect(scrollSelection == window ? 1 : 0.92)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 28)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.snappy(duration: 0.22)) {
+                                        scrollSelection = window
+                                    }
+                                }
+                                .id(window)
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.vertical, 42)
+                }
+                .scrollIndicators(.hidden)
+                .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+                .scrollPosition(id: $scrollSelection, anchor: .center)
+                .mask {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black.opacity(0.30), location: 0.16),
+                            .init(color: .black, location: 0.40),
+                            .init(color: .black, location: 0.60),
+                            .init(color: .black.opacity(0.30), location: 0.84),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+            }
+            .frame(width: 96, height: 112)
+
+            Text("More history uses more resources")
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(10)
+        .onAppear {
+            scrollSelection = selection
+        }
+        .onChange(of: scrollSelection) { _, nextWindow in
+            if let nextWindow, nextWindow != selection {
+                selectWindow(nextWindow)
+            }
+        }
     }
 }
 
@@ -654,6 +624,7 @@ private final class ChartClickCaptureView: NSView {
 private struct TimelinePointSymbol: View {
     let point: TimelinePoint
     let seriesColor: Color
+    let diameter: Double
     let isSelected: Bool
     let opacity: Double
 
@@ -665,15 +636,8 @@ private struct TimelinePointSymbol: View {
                     .padding(-5)
             }
 
-            if point.session.signalState == .unknown {
-                Circle()
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                Circle()
-                    .strokeBorder(PulsePalette.unknown, lineWidth: 1.5)
-            } else {
-                Circle()
-                    .fill(point.session.signalState == .invalid ? PulsePalette.invalid : seriesColor)
-            }
+            Circle()
+                .fill(seriesColor)
 
             if point.isRunning {
                 Circle()
@@ -687,31 +651,84 @@ private struct TimelinePointSymbol: View {
                     .padding(-3)
             }
         }
-        .frame(width: isSelected ? 14 : 10, height: isSelected ? 14 : 10)
+        .frame(width: diameter, height: diameter)
+        .overlay(alignment: .topTrailing) {
+            if point.session.signalState == .invalid {
+                Circle()
+                    .fill(PulsePalette.invalid)
+                    .frame(width: statusBadgeDiameter, height: statusBadgeDiameter)
+                    .overlay {
+                        Circle()
+                            .strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1)
+                    }
+                    .offset(x: 2, y: -2)
+            } else if point.session.signalState == .unknown {
+                Circle()
+                    .fill(PulsePalette.unknown)
+                    .frame(width: statusBadgeDiameter, height: statusBadgeDiameter)
+                    .overlay {
+                        Circle()
+                            .strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1)
+                    }
+                    .offset(x: 2, y: -2)
+            }
+        }
         .opacity(opacity)
         .shadow(color: isSelected ? Color.black.opacity(0.18) : .clear, radius: 3, y: 1)
         .accessibilityLabel(accessibilityText)
     }
 
     private var accessibilityText: String {
-        "\(point.session.threadTitle), \(numberText(point.turnTotalReasoningTokens)) total reasoning tokens"
+        "\(point.session.threadTitle), \(numberText(point.turnTotalReasoningTokens)) reasoning tokens, \(numberText(point.turnTotalTokens)) total tokens"
+    }
+
+    private var statusBadgeDiameter: Double {
+        min(max(diameter * 0.34, 4), 6)
+    }
+}
+
+private enum TurnInspectorPage: Int, CaseIterable, Identifiable {
+    case reasoning
+    case tokenMix
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .reasoning:
+            return "Reasoning"
+        case .tokenMix:
+            return "Token Mix"
+        }
     }
 }
 
 private struct ReasoningTurnInspector: View {
     let point: TimelinePoint
+    let reasoningSamples: [TurnReasoningSample]
+    let isLoadingDetails: Bool
     let openRollout: () -> Bool
 
-    private var samples: [TimelineSamplePoint] {
-        point.reasoningSamples
-    }
+    @State private var page: TurnInspectorPage? = .reasoning
 
-    private var summary: ReasoningSampleSummary {
-        ReasoningSampleSummary(samples: samples)
+    private var samples: [TimelineSamplePoint] {
+        let source = reasoningSamples.isEmpty
+            ? [TurnReasoningSample(observedAt: point.timestamp, tokenUsage: point.session.tokenUsage)]
+            : reasoningSamples
+        return source.enumerated().map { index, sample in
+            TimelineSamplePoint(
+                id: "\(point.id):detail:\(index):\(sample.id)",
+                timestamp: sample.observedAt,
+                reasoningTokens: sample.reasoningOutputTokens
+            )
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        let preparedSamples = samples
+        let preparedSummary = ReasoningSampleSummary(samples: preparedSamples)
+
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 7) {
                 Circle()
                     .fill(statusColor)
@@ -739,56 +756,28 @@ private struct ReasoningTurnInspector: View {
                 .disabled(point.session.rolloutPath == nil)
             }
 
-            HStack(spacing: 12) {
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 2) {
-                    reasoningMetric("CALLS", summary.count.formatted())
-                    reasoningMetric("TURN TOTAL", numberText(point.turnTotalReasoningTokens))
-                    reasoningMetric(
-                        "RANGE",
-                        "\(numberText(summary.minimum))–\(numberText(summary.maximum))"
-                    )
-                    reasoningMetric("MEDIAN", numberText(summary.median))
-                    reasoningMetric("SPAN", durationText(summary.duration))
-                }
-                .frame(width: 156, alignment: .leading)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("REASONING TOKENS OVER TIME · LOG")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(.secondary)
-
-                    Chart(samples) { sample in
-                        LineMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Reasoning", sample.plotReasoningTokens)
+            GeometryReader { geometry in
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 0) {
+                        reasoningPage(
+                            samples: preparedSamples,
+                            summary: preparedSummary
                         )
-                        .interpolationMethod(.monotone)
-                        .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
-                        .foregroundStyle(threadColor.opacity(0.78))
+                            .frame(width: geometry.size.width)
+                            .id(TurnInspectorPage.reasoning)
 
-                        PointMark(
-                            x: .value("Time", sample.timestamp),
-                            y: .value("Reasoning", sample.plotReasoningTokens)
-                        )
-                        .symbolSize(10)
-                        .foregroundStyle(threadColor.opacity(0.88))
+                        tokenMixPage
+                            .frame(width: geometry.size.width)
+                            .id(TurnInspectorPage.tokenMix)
                     }
-                    .chartYScale(
-                        domain: TimelineLogScale.domain(for: samples.map(\.reasoningTokens)),
-                        type: .log
-                    )
-                    .chartXAxis(.hidden)
-                    .chartYAxis(.hidden)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.primary.opacity(0.025))
-                    )
+                    .scrollTargetLayout()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .scrollIndicators(.hidden)
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $page)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
 
             HStack(spacing: 7) {
                 Text(point.timestamp.formatted(date: .omitted, time: .shortened))
@@ -796,7 +785,36 @@ private struct ReasoningTurnInspector: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
-                Text("Large node = Turn · small nodes = model calls")
+
+                Button {
+                    setPage(.reasoning)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.plain)
+                .disabled(currentPage == .reasoning)
+                .accessibilityLabel("Show reasoning details")
+
+                Text(currentPage.title.uppercased())
+                    .font(.system(size: 8.5, weight: .bold))
+                    .frame(width: 72)
+
+                HStack(spacing: 4) {
+                    ForEach(TurnInspectorPage.allCases) { item in
+                        Circle()
+                            .fill(item == currentPage ? threadColor : Color.secondary.opacity(0.28))
+                            .frame(width: 4, height: 4)
+                    }
+                }
+
+                Button {
+                    setPage(.tokenMix)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .disabled(currentPage == .tokenMix)
+                .accessibilityLabel("Show token mix details")
             }
             .font(.system(size: 8.8, design: .monospaced))
             .foregroundStyle(.secondary)
@@ -810,9 +828,135 @@ private struct ReasoningTurnInspector: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08))
         }
+        .contentShape(Rectangle())
+        .help("Swipe left or right to switch between Reasoning and Token Mix")
     }
 
-    private func reasoningMetric(_ label: String, _ value: String) -> some View {
+    private func reasoningPage(
+        samples: [TimelineSamplePoint],
+        summary: ReasoningSampleSummary
+    ) -> some View {
+        HStack(spacing: 12) {
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 2) {
+                metricRow("CALLS", summary.count.formatted())
+                metricRow("REASONING", numberText(point.turnTotalReasoningTokens))
+                metricRow(
+                    "RANGE",
+                    "\(numberText(summary.minimum))–\(numberText(summary.maximum))"
+                )
+                metricRow("MEDIAN", numberText(summary.median))
+                metricRow("SPAN", durationText(summary.duration))
+            }
+            .frame(width: 156, alignment: .leading)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text("MODEL CALL REASONING OVER TIME · LOG")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    if isLoadingDetails {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                }
+
+                Chart(TimelineSampleDownsampler.reduce(samples, limit: 36)) { sample in
+                    LineMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Reasoning", sample.plotReasoningTokens)
+                    )
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(threadColor.opacity(0.78))
+
+                    PointMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Reasoning", sample.plotReasoningTokens)
+                    )
+                    .symbolSize(10)
+                    .foregroundStyle(threadColor.opacity(0.88))
+                }
+                .chartYScale(
+                    domain: TimelineLogScale.domain(for: samples.map(\.reasoningTokens)),
+                    type: .log
+                )
+                .chartXAxis(.hidden)
+                .chartYAxis(.hidden)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.025))
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    private var tokenMixPage: some View {
+        HStack(spacing: 12) {
+            usageColumn(
+                title: "LAST CALL",
+                usage: point.session.tokenUsage.last,
+                reasoningTokens: point.session.tokenUsage.last.reasoningOutputTokens,
+                allTokens: lastCallTotalTokens
+            )
+
+            Divider()
+
+            usageColumn(
+                title: "TURN TOTAL",
+                usage: point.session.tokenUsage.total,
+                reasoningTokens: point.turnTotalReasoningTokens,
+                allTokens: point.turnTotalTokens
+            )
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("RATIOS")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(.secondary)
+
+                ratioMetric(
+                    "Cached / input",
+                    value: cachedInputRatio,
+                    tint: PulsePalette.accent
+                )
+                ratioMetric(
+                    "Reasoning / output",
+                    value: reasoningOutputRatio,
+                    tint: PulsePalette.running
+                )
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func usageColumn(
+        title: String,
+        usage: TurnUsage,
+        reasoningTokens: Int,
+        allTokens: Int
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 1) {
+                metricRow("REASONING", numberText(reasoningTokens))
+                metricRow("OUTPUT", numberText(usage.outputTokens))
+                metricRow("CACHED", numberText(usage.cachedInputTokens))
+                metricRow("INPUT", numberText(usage.inputTokens))
+                metricRow("ALL TOKENS", numberText(allTokens))
+            }
+        }
+        .frame(width: 182, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func metricRow(_ label: String, _ value: String) -> some View {
         GridRow {
             Text(label)
                 .font(.system(size: 8.5, weight: .bold))
@@ -822,6 +966,69 @@ private struct ReasoningTurnInspector: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
+    }
+
+    private func ratioMetric(_ label: String, value: Double, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(label)
+                Spacer()
+                Text("\(Int((value * 100).rounded()))%")
+                    .foregroundStyle(tint)
+            }
+            .font(.system(size: 8.5, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(Color.secondary.opacity(0.15))
+                    Capsule(style: .continuous)
+                        .fill(tint)
+                        .frame(width: geometry.size.width * value)
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+
+    private var lastCallTotalTokens: Int {
+        let usage = point.session.tokenUsage.last
+        return max(usage.totalTokens, usage.inputTokens + usage.outputTokens, usage.reasoningOutputTokens)
+    }
+
+    private var cachedInputRatio: Double {
+        ratio(
+            numerator: point.session.tokenUsage.total.cachedInputTokens,
+            denominator: point.session.tokenUsage.total.inputTokens
+        )
+    }
+
+    private var reasoningOutputRatio: Double {
+        ratio(
+            numerator: point.turnTotalReasoningTokens,
+            denominator: point.session.tokenUsage.total.outputTokens
+        )
+    }
+
+    private func ratio(numerator: Int, denominator: Int) -> Double {
+        guard denominator > 0 else {
+            return 0
+        }
+        return min(max(Double(numerator) / Double(denominator), 0), 1)
+    }
+
+    private func setPage(_ nextPage: TurnInspectorPage) {
+        guard nextPage != currentPage else {
+            return
+        }
+        withAnimation(.snappy(duration: 0.24)) {
+            page = nextPage
+        }
+    }
+
+    private var currentPage: TurnInspectorPage {
+        page ?? .reasoning
     }
 
     private var statusColor: Color {

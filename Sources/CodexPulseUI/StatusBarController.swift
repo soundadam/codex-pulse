@@ -21,9 +21,6 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         popover.animates = false
         popover.delegate = self
         popover.contentSize = NSSize(width: 760, height: 520)
-        popover.contentViewController = NSHostingController(
-            rootView: InspectorRootView(model: model)
-        )
 
         if let button = statusItem.button {
             button.title = model.statusTitle
@@ -55,6 +52,11 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         guard let button = statusItem.button else {
             return
         }
+
+        model.setPopoverVisible(true)
+        popover.contentViewController = NSHostingController(
+            rootView: InspectorRootView(model: model)
+        )
 
         let anchorRect = NSRect(
             x: max(0, button.bounds.midX - 2),
@@ -162,6 +164,10 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
     public func popoverDidClose(_ notification: Notification) {
         lastPopoverCloseAt = Date()
         removeEventMonitors()
+        model.setPopoverVisible(false)
+        // Releasing the hosting controller tears down Swift Charts and its
+        // retained Canvas/IOSurface backing stores while the popover is closed.
+        popover.contentViewController = nil
     }
 
     private func hitTestsPopoverOrStatusItem(event: NSEvent) -> Bool {

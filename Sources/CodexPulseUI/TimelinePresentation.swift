@@ -3,31 +3,56 @@ import CoreGraphics
 import Foundation
 
 enum TimelineWindow: String, CaseIterable, Identifiable, Sendable {
-    case fifteenMinutes
-    case thirtyMinutes
     case oneHour
+    case threeHours
+    case sixHours
+    case twelveHours
+    case oneDay
 
     var id: String { rawValue }
 
     var duration: TimeInterval {
         switch self {
-        case .fifteenMinutes:
-            return 15 * 60
-        case .thirtyMinutes:
-            return 30 * 60
         case .oneHour:
             return 60 * 60
+        case .threeHours:
+            return 3 * 60 * 60
+        case .sixHours:
+            return 6 * 60 * 60
+        case .twelveHours:
+            return 12 * 60 * 60
+        case .oneDay:
+            return 24 * 60 * 60
         }
     }
 
     var shortLabel: String {
         switch self {
-        case .fifteenMinutes:
-            return "15m"
-        case .thirtyMinutes:
-            return "30m"
         case .oneHour:
             return "1h"
+        case .threeHours:
+            return "3h"
+        case .sixHours:
+            return "6h"
+        case .twelveHours:
+            return "12h"
+        case .oneDay:
+            return "24h"
+        }
+    }
+
+    var fetchMultiplier: Int {
+        switch self {
+        case .oneHour:
+            return 1
+        case .threeHours:
+            return 2
+        case .sixHours:
+            return 3
+        case .twelveHours:
+            return 4
+        case .oneDay:
+            return 6
         }
     }
 }
@@ -46,8 +71,12 @@ struct TimelinePoint: Identifiable, Equatable {
             ? sampledTotal
             : max(session.usage.reasoningOutputTokens, session.timelineReasoningTokens)
     }
+    var turnTotalTokens: Int {
+        let total = session.tokenUsage.total
+        let reconstructedTotal = total.inputTokens + total.outputTokens
+        return max(total.totalTokens, reconstructedTotal, turnTotalReasoningTokens)
+    }
     var isRunning: Bool { session.monitorState == .running }
-    var callTraceSeriesID: String { "call-trace:\(id)" }
 
     var reasoningSamples: [TimelineSamplePoint] {
         let samples = session.reasoningSamples.isEmpty
@@ -93,63 +122,33 @@ enum TimelineLogScale {
     }
 }
 
-struct TimelineDualLogScale: Equatable {
-    let turnDomain: ClosedRange<Double>
-    let callDomain: ClosedRange<Double>
+struct TimelineNodeSizeScale: Equatable {
+    let tokenDomain: ClosedRange<Double>
+    let diameterRange: ClosedRange<Double>
 
-    init(turnValues: [Int], callValues: [Int]) {
-        turnDomain = TimelineLogScale.domain(for: turnValues)
-        callDomain = TimelineLogScale.domain(for: callValues)
+    init(
+        tokenValues: [Int],
+        diameterRange: ClosedRange<Double> = 8...22
+    ) {
+        let values = tokenValues.map { log1p(Double(max(0, $0))) }
+        let minimum = values.min() ?? 0
+        let maximum = values.max() ?? minimum
+        tokenDomain = minimum...maximum
+        self.diameterRange = diameterRange
     }
 
-    var turnTickPositions: [Double] {
-        Self.tickPositions(for: turnDomain)
-    }
-
-    var callTickPositions: [Double] {
-        Self.tickPositions(for: callDomain)
-    }
-
-    func turnPosition(for tokens: Int) -> Double {
-        Self.position(for: tokens, domain: turnDomain)
-    }
-
-    func callPosition(for tokens: Int) -> Double {
-        Self.position(for: tokens, domain: callDomain)
-    }
-
-    func turnLabel(at position: Double) -> Int {
-        Self.tokenValue(at: position, domain: turnDomain)
-    }
-
-    func callLabel(at position: Double) -> Int {
-        Self.tokenValue(at: position, domain: callDomain)
-    }
-
-    private static func position(for tokens: Int, domain: ClosedRange<Double>) -> Double {
-        let value = TimelineLogScale.plotValue(tokens)
-        let lower = log10(domain.lowerBound)
-        let upper = log10(domain.upperBound)
-        guard upper > lower else {
-            return 0
+    func diameter(for tokens: Int) -> Double {
+        guard tokenDomain.upperBound > tokenDomain.lowerBound else {
+            return diameterRange.lowerBound
         }
-        return min(max((log10(value) - lower) / (upper - lower), 0), 1)
-    }
-
-    private static func tokenValue(at position: Double, domain: ClosedRange<Double>) -> Int {
-        let lower = log10(domain.lowerBound)
-        let upper = log10(domain.upperBound)
-        let exponent = lower + min(max(position, 0), 1) * (upper - lower)
-        return Int(pow(10, exponent).rounded())
-    }
-
-    private static func tickPositions(for domain: ClosedRange<Double>) -> [Double] {
-        let lowerExponent = Int(log10(domain.lowerBound).rounded())
-        let upperExponent = Int(log10(domain.upperBound).rounded())
-        let span = max(1, upperExponent - lowerExponent)
-        return (lowerExponent...upperExponent).map {
-            Double($0 - lowerExponent) / Double(span)
-        }
+        let value = log1p(Double(max(0, tokens)))
+        let normalized = min(
+            max((value - tokenDomain.lowerBound) / (tokenDomain.upperBound - tokenDomain.lowerBound), 0),
+            1
+        )
+        let minimumArea = diameterRange.lowerBound * diameterRange.lowerBound
+        let maximumArea = diameterRange.upperBound * diameterRange.upperBound
+        return sqrt(minimumArea + normalized * (maximumArea - minimumArea))
     }
 }
 
@@ -174,6 +173,38 @@ struct ThreadTimelineSeries: Identifiable, Equatable {
 
     var latestTimestamp: Date {
         points.last?.timestamp ?? .distantPast
+    }
+}
+
+/// Immutable, already-derived chart input. SwiftUI can read this value as often
+/// as it needs without repeating timeline filtering, de-duplication, sorting,
+/// scale calculation, or lookup construction.
+struct TimelinePresentation: Equatable {
+    let series: [ThreadTimelineSeries]
+    let points: [TimelinePoint]
+    let pointsByID: [String: TimelinePoint]
+    let seriesByThreadID: [String: ThreadTimelineSeries]
+    let dateDomain: ClosedRange<Date>
+    let reasoningDomain: ClosedRange<Double>
+    let nodeSizeScale: TimelineNodeSizeScale
+    let invalidTurnCount: Int
+    let observedTurnCount: Int
+    let unknownTurnCount: Int
+
+    static func empty(window: TimelineWindow, referenceDate: Date) -> TimelinePresentation {
+        let upperBound = TimelinePresentationBuilder.alignedUpperBound(for: referenceDate)
+        return TimelinePresentation(
+            series: [],
+            points: [],
+            pointsByID: [:],
+            seriesByThreadID: [:],
+            dateDomain: upperBound.addingTimeInterval(-window.duration)...upperBound,
+            reasoningDomain: TimelineLogScale.floor...10,
+            nodeSizeScale: TimelineNodeSizeScale(tokenValues: []),
+            invalidTurnCount: 0,
+            observedTurnCount: 0,
+            unknownTurnCount: 0
+        )
     }
 }
 
@@ -262,6 +293,62 @@ enum TimelineSampleDownsampler {
 }
 
 enum TimelinePresentationBuilder {
+    /// The visible clock advances at minute granularity. New realtime points
+    /// still rebuild immediately, while an unchanged chart does not shift and
+    /// re-layout every three seconds merely because wall clock time advanced.
+    static func alignedUpperBound(for date: Date) -> Date {
+        let minute: TimeInterval = 60
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return Date(
+            timeIntervalSinceReferenceDate: ceil(timestamp / minute) * minute
+        )
+    }
+
+    static func makePresentation(
+        sessions: [CompletedSession],
+        searchQuery: String,
+        window: TimelineWindow,
+        now: Date,
+        pointLimit: Int = 240,
+        paletteCount: Int = 8
+    ) -> TimelinePresentation {
+        let upperBound = alignedUpperBound(for: now)
+        let series = build(
+            sessions: sessions,
+            searchQuery: searchQuery,
+            window: window,
+            now: upperBound,
+            pointLimit: pointLimit,
+            paletteCount: paletteCount
+        )
+        let points = series
+            .flatMap(\.points)
+            .sorted(by: pointDateAscending)
+
+        return TimelinePresentation(
+            series: series,
+            points: points,
+            pointsByID: Dictionary(uniqueKeysWithValues: points.map { ($0.id, $0) }),
+            seriesByThreadID: Dictionary(uniqueKeysWithValues: series.map { ($0.threadID, $0) }),
+            dateDomain: upperBound.addingTimeInterval(-window.duration)...upperBound,
+            reasoningDomain: TimelineLogScale.domain(
+                for: points.map(\.turnTotalReasoningTokens)
+            ),
+            nodeSizeScale: TimelineNodeSizeScale(
+                tokenValues: points.map(\.turnTotalTokens)
+            ),
+            invalidTurnCount: points.lazy.filter {
+                $0.session.signalState == .invalid
+            }.count,
+            observedTurnCount: points.lazy.filter {
+                $0.session.signalState == .valid
+            }.count,
+            unknownTurnCount: points.lazy.filter {
+                $0.session.signalState == .unknown
+            }.count
+        )
+    }
+
     static func build(
         sessions: [CompletedSession],
         searchQuery: String,
@@ -421,7 +508,9 @@ enum TimelineHitTester {
         }
 
         let nearestLine = series.compactMap { item -> (threadID: String, distance: CGFloat)? in
-            let lineRuns = item.lineRuns + [item.points.map(\.position)]
+            let lineRuns = item.lineRuns.isEmpty
+                ? [item.points.map(\.position)]
+                : item.lineRuns
             let segmentDistances = lineRuns.flatMap { run in
                 zip(run, run.dropFirst()).map { left, right in
                     distanceFromPoint(location, toSegmentFrom: left, to: right)

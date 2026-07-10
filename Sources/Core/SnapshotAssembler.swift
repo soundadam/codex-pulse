@@ -5,7 +5,8 @@ public enum SnapshotAssembler {
         threads: [CodexThreadRef],
         parsedRollouts: [String: ParsedRollout],
         suspiciousModulo: Int,
-        generatedAt: Date = Date()
+        generatedAt: Date = Date(),
+        includeLegacyCollections: Bool = true
     ) -> MonitorSnapshot {
         let monitorThreads = threads
             .map { thread in
@@ -25,16 +26,20 @@ public enum SnapshotAssembler {
             }
             .sorted(by: newestFirst)
 
-        let projectCards = buildProjectCards(from: monitorThreads)
+        let projectCards = includeLegacyCollections
+            ? buildProjectCards(from: monitorThreads)
+            : []
         let completedSessions = buildCompletedSessions(
             threads: threads,
             parsedRollouts: parsedRollouts,
             suspiciousModulo: suspiciousModulo
         )
-        let threadTurnGroups = buildThreadTurnGroups(
-            threads: threads,
-            parsedRollouts: parsedRollouts
-        )
+        let threadTurnGroups = includeLegacyCollections
+            ? buildThreadTurnGroups(
+                threads: threads,
+                parsedRollouts: parsedRollouts
+            )
+            : []
 
         return MonitorSnapshot(
             generatedAt: generatedAt,

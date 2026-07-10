@@ -170,6 +170,21 @@ public struct LatestTurn: Sendable, Codable, Equatable {
     public var lastUsage: TurnUsage { tokenUsage.last }
 
     public var totalUsage: TurnUsage { tokenUsage.total }
+
+    public func withReasoningSamples(_ reasoningSamples: [TurnReasoningSample]) -> LatestTurn {
+        LatestTurn(
+            turnId: turnId,
+            status: status,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            usage: usage,
+            lastAgentMessage: lastAgentMessage,
+            tokenUsage: tokenUsage,
+            reasoningSamples: reasoningSamples
+        )
+    }
 }
 
 public struct ParsedRollout: Sendable, Equatable {
@@ -179,6 +194,25 @@ public struct ParsedRollout: Sendable, Equatable {
     public init(turns: [LatestTurn], latestTurn: LatestTurn?) {
         self.turns = turns
         self.latestTurn = latestTurn
+    }
+
+    public func withoutReasoningSamples() -> ParsedRollout {
+        let strippedTurns = turns.map { $0.withReasoningSamples([]) }
+        let latestTurnID = latestTurn?.turnId
+        let strippedLatest = strippedTurns.last(where: { $0.turnId == latestTurnID })
+            ?? latestTurn?.withReasoningSamples([])
+        return ParsedRollout(turns: strippedTurns, latestTurn: strippedLatest)
+    }
+
+    public func retainingReasoningSamples(since cutoff: Date) -> ParsedRollout {
+        let filteredTurns = turns.map { turn in
+            let timestamp = turn.completedAt ?? turn.startedAt ?? .distantPast
+            return timestamp >= cutoff ? turn : turn.withReasoningSamples([])
+        }
+        let latestTurnID = latestTurn?.turnId
+        let filteredLatest = filteredTurns.last(where: { $0.turnId == latestTurnID })
+            ?? latestTurn?.withReasoningSamples([])
+        return ParsedRollout(turns: filteredTurns, latestTurn: filteredLatest)
     }
 }
 
@@ -255,6 +289,20 @@ public struct MonitorThread: Sendable, Codable, Equatable, Identifiable {
             return nil
         }
         return "\(id):\(turnId)"
+    }
+
+    public func withLatestTurn(_ latestTurn: LatestTurn?) -> MonitorThread {
+        MonitorThread(
+            id: id,
+            name: name,
+            preview: preview,
+            source: source,
+            cwd: cwd,
+            rolloutPath: rolloutPath,
+            updatedAt: updatedAt,
+            latestTurn: latestTurn,
+            monitorState: monitorState
+        )
     }
 
     static func trim(_ text: String?) -> String? {

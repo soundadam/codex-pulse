@@ -112,7 +112,7 @@ private struct JSONRPCInitializeParams: Encodable {
     let clientInfo = ClientInfo(
         name: "codex_pulse",
         title: "Codex Pulse",
-        version: "0.3.0"
+        version: "1.0.0"
     )
     let capabilities = Capabilities(
         experimentalApi: true,
