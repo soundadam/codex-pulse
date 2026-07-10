@@ -1,6 +1,6 @@
 import Foundation
 import Core
-import UserNotifications
+@preconcurrency import UserNotifications
 
 protocol NotificationSending: Sendable {
     func requestAuthorization() async
