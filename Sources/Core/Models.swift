@@ -70,6 +70,41 @@ public struct TurnTokenUsageSnapshot: Sendable, Codable, Equatable {
     }
 }
 
+public enum TurnSignalState: String, Sendable, Codable, Equatable {
+    case invalid
+    case valid
+    case unknown
+}
+
+public struct LiveTurnSample: Sendable, Codable, Equatable, Identifiable {
+    public let threadId: String
+    public let turnId: String
+    public let observedAt: Date
+    public let tokenUsage: TurnTokenUsageSnapshot
+    public let modelContextWindow: Int?
+    public let hitInvalidSignal: Bool
+
+    public init(
+        threadId: String,
+        turnId: String,
+        observedAt: Date,
+        tokenUsage: TurnTokenUsageSnapshot,
+        modelContextWindow: Int?,
+        hitInvalidSignal: Bool
+    ) {
+        self.threadId = threadId
+        self.turnId = turnId
+        self.observedAt = observedAt
+        self.tokenUsage = tokenUsage
+        self.modelContextWindow = modelContextWindow
+        self.hitInvalidSignal = hitInvalidSignal
+    }
+
+    public var id: String {
+        "\(threadId):\(turnId):\(Int(observedAt.timeIntervalSince1970 * 1000))"
+    }
+}
+
 public enum TurnStatus: String, Sendable, Codable, Equatable {
     case running
     case completed
@@ -265,9 +300,119 @@ public struct ProjectCard: Sendable, Codable, Equatable, Identifiable {
     }
 }
 
-public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
-    private static let invalidReasoningModulo = 516
+public struct TurnDetailItem: Sendable, Codable, Equatable, Identifiable {
+    public let key: String
+    public let threadId: String
+    public let turnId: String?
+    public let startedAt: Date?
+    public let completedAt: Date?
+    public let model: String?
+    public let reasoningEffort: String?
+    public let lastUsage: TurnUsage
+    public let totalUsage: TurnUsage
+    public let hadInvalidSignal: Bool
+    public let status: MonitorState
+    public let assistantPreview: String?
+    public let rolloutPath: String?
 
+    public init(
+        key: String,
+        threadId: String,
+        turnId: String?,
+        startedAt: Date?,
+        completedAt: Date?,
+        model: String?,
+        reasoningEffort: String?,
+        lastUsage: TurnUsage,
+        totalUsage: TurnUsage,
+        hadInvalidSignal: Bool,
+        status: MonitorState,
+        assistantPreview: String?,
+        rolloutPath: String?
+    ) {
+        self.key = key
+        self.threadId = threadId
+        self.turnId = turnId
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.lastUsage = lastUsage
+        self.totalUsage = totalUsage
+        self.hadInvalidSignal = hadInvalidSignal
+        self.status = status
+        self.assistantPreview = assistantPreview
+        self.rolloutPath = rolloutPath
+    }
+
+    public var id: String { key }
+
+    public var signalState: TurnSignalState {
+        if hadInvalidSignal {
+            return .invalid
+        }
+        if status == .unknown {
+            return .unknown
+        }
+        return .valid
+    }
+
+    public var latestAt: Date? {
+        completedAt ?? startedAt
+    }
+
+    public var displayTurnID: String {
+        turnId ?? "unknown-turn"
+    }
+
+    public func withSignal(hadInvalidSignal: Bool, status: MonitorState) -> TurnDetailItem {
+        TurnDetailItem(
+            key: key,
+            threadId: threadId,
+            turnId: turnId,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            lastUsage: lastUsage,
+            totalUsage: totalUsage,
+            hadInvalidSignal: hadInvalidSignal,
+            status: status,
+            assistantPreview: assistantPreview,
+            rolloutPath: rolloutPath
+        )
+    }
+}
+
+public struct ThreadTurnGroup: Sendable, Codable, Equatable, Identifiable {
+    public let threadId: String
+    public let threadTitle: String
+    public let projectName: String
+    public let subtitle: String
+    public let turns: [TurnDetailItem]
+
+    public init(
+        threadId: String,
+        threadTitle: String,
+        projectName: String,
+        subtitle: String,
+        turns: [TurnDetailItem]
+    ) {
+        self.threadId = threadId
+        self.threadTitle = threadTitle
+        self.projectName = projectName
+        self.subtitle = subtitle
+        self.turns = turns
+    }
+
+    public var id: String { threadId }
+
+    public var latestAt: Date? {
+        turns.first?.latestAt
+    }
+}
+
+public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
     public let key: String
     public let threadId: String
     public let turnId: String?
@@ -283,6 +428,7 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
     public let usage: TurnUsage
     public let tokenUsage: TurnTokenUsageSnapshot
     public let monitorState: MonitorState
+    public let signalState: TurnSignalState
     public let assistantPreview: String?
 
     public init(
@@ -301,6 +447,7 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
         usage: TurnUsage,
         tokenUsage: TurnTokenUsageSnapshot,
         monitorState: MonitorState,
+        signalState: TurnSignalState = .unknown,
         assistantPreview: String?
     ) {
         self.key = key
@@ -318,6 +465,7 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
         self.usage = usage
         self.tokenUsage = tokenUsage
         self.monitorState = monitorState
+        self.signalState = signalState
         self.assistantPreview = assistantPreview
     }
 
@@ -328,18 +476,40 @@ public struct CompletedSession: Sendable, Codable, Equatable, Identifiable {
     }
 
     public var isInvalidReasoning: Bool {
-        let values = [
-            tokenUsage.last.reasoningOutputTokens,
-            usage.reasoningOutputTokens,
-        ]
+        signalState == .invalid
+    }
 
-        if values.contains(0) {
-            return true
-        }
+    public var isKnownSignal: Bool {
+        signalState != .unknown
+    }
 
-        return values.contains {
-            $0 > 0 && $0.isMultiple(of: Self.invalidReasoningModulo)
+    public var turnKey: String? {
+        guard let turnId else {
+            return nil
         }
+        return "\(threadId):\(turnId)"
+    }
+
+    public func withSignalState(_ signalState: TurnSignalState) -> CompletedSession {
+        CompletedSession(
+            key: key,
+            threadId: threadId,
+            turnId: turnId,
+            projectName: projectName,
+            subtitle: subtitle,
+            threadTitle: threadTitle,
+            source: source,
+            rolloutPath: rolloutPath,
+            startedAt: startedAt,
+            completedAt: completedAt,
+            model: model,
+            reasoningEffort: reasoningEffort,
+            usage: usage,
+            tokenUsage: tokenUsage,
+            monitorState: monitorState,
+            signalState: signalState,
+            assistantPreview: assistantPreview
+        )
     }
 
     public func matches(searchQuery: String) -> Bool {
@@ -370,19 +540,22 @@ public struct MonitorSnapshot: Sendable, Codable, Equatable {
     public let threads: [MonitorThread]
     public let projectCards: [ProjectCard]
     public let completedSessions: [CompletedSession]
+    public let threadTurnGroups: [ThreadTurnGroup]
 
     public init(
         generatedAt: Date,
         suspiciousModulo: Int,
         threads: [MonitorThread],
         projectCards: [ProjectCard],
-        completedSessions: [CompletedSession] = []
+        completedSessions: [CompletedSession] = [],
+        threadTurnGroups: [ThreadTurnGroup] = []
     ) {
         self.generatedAt = generatedAt
         self.suspiciousModulo = suspiciousModulo
         self.threads = threads
         self.projectCards = projectCards
         self.completedSessions = completedSessions
+        self.threadTurnGroups = threadTurnGroups
     }
 
     public var suspiciousCount: Int {

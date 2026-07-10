@@ -2,6 +2,7 @@ import Core
 import Foundation
 import Testing
 
+@Suite(.serialized)
 struct AppServerClientTests {
     @Test
     func listsThreads() async throws {
@@ -63,6 +64,34 @@ struct AppServerClientTests {
             try await withClient(configuration: configuration) { client in
                 let threads = try await client.listThreads(limit: 20, cwdFilters: [])
                 #expect(threads.isEmpty)
+            }
+        }
+    }
+
+    @Test
+    func streamsTokenUsageUpdatesAfterResumeSubscription() async throws {
+        try await withStubServer(scenario: "resume_stream") { configuration in
+            try await withClient(configuration: configuration) { client in
+                let sink = EventSink()
+                await client.setEventHandler { event in
+                    await sink.append(event)
+                }
+
+                await client.syncSubscriptions(threadIDs: ["thread-1"])
+                try await Task.sleep(for: .milliseconds(80))
+
+                let events = await sink.snapshot()
+                #expect(events.count == 1)
+
+                guard case let .tokenUsageUpdated(update) = events[0] else {
+                    Issue.record("missing token usage update")
+                    return
+                }
+
+                #expect(update.threadId == "thread-1")
+                #expect(update.turnId == "turn-1")
+                #expect(update.tokenUsage.last.reasoningOutputTokens == 177)
+                #expect(update.tokenUsage.total.reasoningOutputTokens == 936)
             }
         }
     }
@@ -160,6 +189,36 @@ struct AppServerClientTests {
                     sys.exit(0)
                 continue
 
+            if method == "thread/resume":
+                send(message["id"], {})
+                if scenario == "resume_stream":
+                    notify("thread/tokenUsage/updated", {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "tokenUsage": {
+                            "total": {
+                                "totalTokens": 1200,
+                                "inputTokens": 900,
+                                "cachedInputTokens": 400,
+                                "outputTokens": 300,
+                                "reasoningOutputTokens": 936
+                            },
+                            "last": {
+                                "totalTokens": 240,
+                                "inputTokens": 180,
+                                "cachedInputTokens": 120,
+                                "outputTokens": 60,
+                                "reasoningOutputTokens": 177
+                            },
+                            "modelContextWindow": 258400
+                        }
+                    })
+                continue
+
+            if method == "thread/unsubscribe":
+                send(message["id"], {"status": "unsubscribed"})
+                continue
+
             if method != "thread/list":
                 send(message["id"], {"data": [], "nextCursor": None})
                 continue
@@ -218,5 +277,17 @@ struct AppServerClientTests {
                 "nextCursor": None
             })
         """#
+    }
+}
+
+actor EventSink {
+    private var events: [AppServerEvent] = []
+
+    func append(_ event: AppServerEvent) {
+        events.append(event)
+    }
+
+    func snapshot() -> [AppServerEvent] {
+        events
     }
 }

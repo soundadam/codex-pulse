@@ -31,13 +31,18 @@ public enum SnapshotAssembler {
             parsedRollouts: parsedRollouts,
             suspiciousModulo: suspiciousModulo
         )
+        let threadTurnGroups = buildThreadTurnGroups(
+            threads: threads,
+            parsedRollouts: parsedRollouts
+        )
 
         return MonitorSnapshot(
             generatedAt: generatedAt,
             suspiciousModulo: suspiciousModulo,
             threads: monitorThreads,
             projectCards: projectCards,
-            completedSessions: completedSessions
+            completedSessions: completedSessions,
+            threadTurnGroups: threadTurnGroups
         )
     }
 
@@ -62,7 +67,8 @@ public enum SnapshotAssembler {
             if latestTurn.usage.reasoningOutputTokens == 0 {
                 return .suspicious
             }
-            if latestTurn.usage.reasoningOutputTokens > 0,
+            if suspiciousModulo > 0,
+               latestTurn.usage.reasoningOutputTokens > 0,
                latestTurn.usage.reasoningOutputTokens.isMultiple(of: suspiciousModulo) {
                 return .suspicious
             }
@@ -151,11 +157,70 @@ public enum SnapshotAssembler {
                         usage: turn.usage,
                         tokenUsage: turn.tokenUsage,
                         monitorState: evaluateMonitorState(latestTurn: turn, suspiciousModulo: suspiciousModulo),
+                        signalState: .unknown,
                         assistantPreview: turn.lastAgentMessage
                     )
                 }
             }
             .sorted(by: newestFirst)
+    }
+
+    private static func buildThreadTurnGroups(
+        threads: [CodexThreadRef],
+        parsedRollouts: [String: ParsedRollout]
+    ) -> [ThreadTurnGroup] {
+        threads
+            .compactMap { thread -> ThreadTurnGroup? in
+                guard let rolloutPath = thread.rolloutPath,
+                      let parsedRollout = parsedRollouts[rolloutPath] else {
+                    return nil
+                }
+
+                let turns = parsedRollout.turns.compactMap { turn -> TurnDetailItem? in
+                    guard turn.status == .completed else {
+                        return nil
+                    }
+
+                    return TurnDetailItem(
+                        key: completedSessionKey(threadID: thread.id, turn: turn),
+                        threadId: thread.id,
+                        turnId: turn.turnId,
+                        startedAt: turn.startedAt,
+                        completedAt: turn.completedAt ?? thread.updatedAt,
+                        model: turn.model,
+                        reasoningEffort: turn.reasoningEffort,
+                        lastUsage: turn.tokenUsage.last,
+                        totalUsage: turn.tokenUsage.total,
+                        hadInvalidSignal: false,
+                        status: .unknown,
+                        assistantPreview: turn.lastAgentMessage,
+                        rolloutPath: rolloutPath
+                    )
+                }
+                .sorted(by: newestFirst)
+
+                guard turns.isEmpty == false else {
+                    return nil
+                }
+
+                return ThreadTurnGroup(
+                    threadId: thread.id,
+                    threadTitle: MonitorThread.trim(thread.name)
+                        ?? MonitorThread.trim(thread.preview)
+                        ?? thread.id,
+                    projectName: projectName(for: thread),
+                    subtitle: projectSubtitle(for: thread),
+                    turns: turns
+                )
+            }
+            .sorted { left, right in
+                let leftDate = left.latestAt ?? .distantPast
+                let rightDate = right.latestAt ?? .distantPast
+                if leftDate != rightDate {
+                    return leftDate > rightDate
+                }
+                return left.threadTitle.localizedCaseInsensitiveCompare(right.threadTitle) == .orderedAscending
+            }
     }
 
     private static func newestDate(for thread: MonitorThread) -> Date {
@@ -164,6 +229,10 @@ public enum SnapshotAssembler {
 
     private static func newestDate(for session: CompletedSession) -> Date {
         session.completedAt ?? session.startedAt ?? .distantPast
+    }
+
+    private static func newestDate(for turn: TurnDetailItem) -> Date {
+        turn.completedAt ?? turn.startedAt ?? .distantPast
     }
 
     private static func newestFirst(_ left: MonitorThread, _ right: MonitorThread) -> Bool {
@@ -176,6 +245,15 @@ public enum SnapshotAssembler {
     }
 
     private static func newestFirst(_ left: CompletedSession, _ right: CompletedSession) -> Bool {
+        let leftDate = newestDate(for: left)
+        let rightDate = newestDate(for: right)
+        if leftDate != rightDate {
+            return leftDate > rightDate
+        }
+        return left.key.localizedCaseInsensitiveCompare(right.key) == .orderedAscending
+    }
+
+    private static func newestFirst(_ left: TurnDetailItem, _ right: TurnDetailItem) -> Bool {
         let leftDate = newestDate(for: left)
         let rightDate = newestDate(for: right)
         if leftDate != rightDate {

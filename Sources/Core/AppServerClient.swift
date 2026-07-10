@@ -86,14 +86,24 @@ private struct JSONRPCInitializeParams: Encodable {
 
     struct Capabilities: Encodable {
         let experimentalApi: Bool
+        let requestAttestation: Bool
+        let optOutNotificationMethods: [String]
     }
 
     let clientInfo = ClientInfo(
-        name: "codex_rollout_inspector",
-        title: "Codex Rollout Inspector",
+        name: "codex_pulse",
+        title: "Codex Pulse",
         version: "0.1.0"
     )
-    let capabilities = Capabilities(experimentalApi: true)
+    let capabilities = Capabilities(
+        experimentalApi: true,
+        requestAttestation: false,
+        optOutNotificationMethods: [
+            "remoteControl/status/changed",
+            "mcpServer/startupStatus/updated",
+            "skills/changed",
+        ]
+    )
 }
 
 private struct JSONRPCRequest<Params: Encodable>: Encodable {
@@ -113,6 +123,14 @@ private struct ThreadListParams: Encodable {
     let cwd: [String]?
 }
 
+private struct ThreadResumeParams: Encodable {
+    let threadId: String
+}
+
+private struct ThreadUnsubscribeParams: Encodable {
+    let threadId: String
+}
+
 private struct ThreadListResult {
     let data: [ThreadListItem]
     let nextCursor: String?
@@ -128,7 +146,9 @@ private struct ThreadListItem {
     let updatedAt: Date?
 }
 
-public actor AppServerClient: ThreadDiscoveryService {
+public actor AppServerClient: ThreadDiscoveryService, ThreadRealtimeSubscribing {
+    public typealias EventHandler = @Sendable (AppServerEvent) async -> Void
+
     private struct PendingRequest {
         let method: String
         let timeoutTask: Task<Void, Never>
@@ -154,6 +174,9 @@ public actor AppServerClient: ThreadDiscoveryService {
     private var pendingRequests: [Int: PendingRequest] = [:]
     private var currentBackoff: Duration
     private var nextStartAllowedAt = ContinuousClock().now
+    private var eventHandler: EventHandler?
+    private var desiredSubscribedThreadIDs: Set<String> = []
+    private var activeSubscribedThreadIDs: Set<String> = []
 
     public init(
         launchConfiguration: AppServerLaunchConfiguration = .codexAppServer(),
@@ -204,7 +227,24 @@ public actor AppServerClient: ThreadDiscoveryService {
         return Array(threads.prefix(requestedLimit))
     }
 
+    public func setEventHandler(_ handler: EventHandler?) async {
+        eventHandler = handler
+    }
+
+    public func syncSubscriptions(threadIDs: [String]) async {
+        desiredSubscribedThreadIDs = Set(threadIDs)
+
+        do {
+            try await ensureConnected()
+            try await reconcileSubscriptions()
+        } catch {
+            return
+        }
+    }
+
     public func shutdown() {
+        let activeProcess = process
+        activeProcess?.terminationHandler = nil
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
@@ -222,14 +262,15 @@ public actor AppServerClient: ThreadDiscoveryService {
         }
 
         stdinHandle?.closeFile()
-        stdinHandle?.closeFile()
         stdinHandle = nil
 
-        if let process, process.isRunning {
-            process.terminate()
+        if let activeProcess, activeProcess.isRunning {
+            activeProcess.terminate()
         }
         process = nil
         isInitialized = false
+        activeSubscribedThreadIDs.removeAll()
+        desiredSubscribedThreadIDs.removeAll()
     }
 
     private func makeThreadRef(from item: ThreadListItem) -> CodexThreadRef {
@@ -338,6 +379,7 @@ public actor AppServerClient: ThreadDiscoveryService {
             _ = try await sendRequestAwaitingResponse(method: "initialize", params: JSONRPCInitializeParams())
             try sendNotification(JSONRPCNotification(method: "initialized", params: EmptyParams()))
             isInitialized = true
+            try await reconcileSubscriptions()
             currentBackoff = baseBackoff
             nextStartAllowedAt = now
         } catch {
@@ -434,6 +476,7 @@ public actor AppServerClient: ThreadDiscoveryService {
         }
 
         guard let id = (object["id"] as? NSNumber)?.intValue else {
+            await handleNotificationObject(object)
             return
         }
 
@@ -464,7 +507,9 @@ public actor AppServerClient: ThreadDiscoveryService {
             return
         }
         pending.timeoutTask.cancel()
-        pending.continuation.resume(throwing: AppServerClientError.requestTimedOut(method: method))
+        let error = AppServerClientError.requestTimedOut(method: method)
+        pending.continuation.resume(throwing: error)
+        await handleFailure(error)
     }
 
     private func processDidTerminate(code: Int32) async {
@@ -477,17 +522,25 @@ public actor AppServerClient: ThreadDiscoveryService {
     }
 
     private func handleFailure(_ error: Error) async {
+        let activeProcess = process
+        activeProcess?.terminationHandler = nil
         stdoutHandle?.readabilityHandler = nil
         stderrHandle?.readabilityHandler = nil
         stdoutHandle?.closeFile()
         stderrHandle?.closeFile()
         stdoutHandle = nil
         stderrHandle = nil
+        stdinHandle?.closeFile()
         stdoutBuffer.removeAll(keepingCapacity: false)
         stderrLineBuffer.removeAll(keepingCapacity: false)
         stdinHandle = nil
         process = nil
         isInitialized = false
+        activeSubscribedThreadIDs.removeAll()
+
+        if let activeProcess, activeProcess.isRunning {
+            activeProcess.terminate()
+        }
 
         let pending = pendingRequests
         pendingRequests.removeAll()
@@ -513,6 +566,106 @@ public actor AppServerClient: ThreadDiscoveryService {
     private func scheduleBackoff() {
         nextStartAllowedAt = .now + currentBackoff
         currentBackoff = min(currentBackoff * 2, maxBackoff)
+    }
+
+    private func reconcileSubscriptions() async throws {
+        let toUnsubscribe = activeSubscribedThreadIDs.subtracting(desiredSubscribedThreadIDs).sorted()
+        let toSubscribe = desiredSubscribedThreadIDs.subtracting(activeSubscribedThreadIDs).sorted()
+
+        for threadID in toUnsubscribe {
+            _ = try await sendRequestAwaitingResponse(
+                method: "thread/unsubscribe",
+                params: ThreadUnsubscribeParams(threadId: threadID)
+            )
+            activeSubscribedThreadIDs.remove(threadID)
+        }
+
+        for threadID in toSubscribe {
+            _ = try await sendRequestAwaitingResponse(
+                method: "thread/resume",
+                params: ThreadResumeParams(threadId: threadID)
+            )
+            activeSubscribedThreadIDs.insert(threadID)
+        }
+    }
+
+    private func handleNotificationObject(_ object: [String: Any]) async {
+        guard let method = object["method"] as? String,
+              let params = object["params"] as? [String: Any] else {
+            return
+        }
+
+        switch method {
+        case "thread/tokenUsage/updated":
+            guard let update = parseTokenUsageUpdate(params) else {
+                return
+            }
+            await emit(.tokenUsageUpdated(update))
+        case "turn/completed":
+            guard let event = parseTurnCompletionEvent(params) else {
+                return
+            }
+            await emit(.turnCompleted(event))
+        default:
+            return
+        }
+    }
+
+    private func emit(_ event: AppServerEvent) async {
+        guard let eventHandler else {
+            return
+        }
+        await eventHandler(event)
+    }
+
+    private func parseTokenUsageUpdate(_ params: [String: Any]) -> ThreadTokenUsageUpdate? {
+        guard let threadId = params["threadId"] as? String,
+              let turnId = params["turnId"] as? String,
+              let tokenUsage = params["tokenUsage"] as? [String: Any],
+              let lastRaw = tokenUsage["last"] as? [String: Any],
+              let totalRaw = tokenUsage["total"] as? [String: Any] else {
+            return nil
+        }
+
+        let snapshot = TurnTokenUsageSnapshot(
+            last: parseUsage(lastRaw),
+            total: parseUsage(totalRaw)
+        )
+
+        let modelContextWindow = (tokenUsage["modelContextWindow"] as? NSNumber)?.intValue
+
+        return ThreadTokenUsageUpdate(
+            threadId: threadId,
+            turnId: turnId,
+            tokenUsage: snapshot,
+            modelContextWindow: modelContextWindow,
+            observedAt: Date()
+        )
+    }
+
+    private func parseTurnCompletionEvent(_ params: [String: Any]) -> TurnCompletionEvent? {
+        guard let threadId = params["threadId"] as? String else {
+            return nil
+        }
+
+        let turn = params["turn"] as? [String: Any]
+        let turnId = turn?["id"] as? String
+        let completedAt = parseFlexibleDate(turn?["completedAt"])
+        return TurnCompletionEvent(threadId: threadId, turnId: turnId, completedAt: completedAt)
+    }
+
+    private func parseUsage(_ raw: [String: Any]) -> TurnUsage {
+        TurnUsage(
+            inputTokens: intValue(raw["inputTokens"]),
+            cachedInputTokens: intValue(raw["cachedInputTokens"]),
+            outputTokens: intValue(raw["outputTokens"]),
+            reasoningOutputTokens: intValue(raw["reasoningOutputTokens"]),
+            totalTokens: intValue(raw["totalTokens"])
+        )
+    }
+
+    private func intValue(_ raw: Any?) -> Int {
+        (raw as? NSNumber)?.intValue ?? 0
     }
 
     private func consumeStdout(_ data: Data) async {

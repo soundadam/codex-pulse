@@ -5,15 +5,17 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Codex Rollout Inspector</string>
+    <string>Codex Pulse</string>
     <key>CFBundleExecutable</key>
-    <string>CodexRolloutInspectorRuntime</string>
+    <string>CodexPulseRuntime</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>local.codex.rollout.inspector</string>
+    <string>local.codex.pulse</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Codex Rollout Inspector</string>
+    <string>Codex Pulse</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

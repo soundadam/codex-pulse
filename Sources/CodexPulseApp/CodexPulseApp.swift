@@ -1,5 +1,5 @@
 import AppKit
-import CodexRolloutInspectorUI
+import CodexPulseUI
 import SwiftUI
 
 @MainActor
@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct CodexRolloutInspectorApp: App {
+struct CodexPulseApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {

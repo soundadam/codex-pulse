@@ -62,6 +62,8 @@ struct SnapshotAssemblerTests {
         #expect(snapshot.projectCards[1].monitorState == .suspicious)
         #expect(snapshot.completedSessions.map(\.key) == ["2:turn-2", "1:turn-1"])
         #expect(snapshot.completedSessions.first?.tokenUsage.total.reasoningOutputTokens == 516)
+        #expect(snapshot.threadTurnGroups.map(\.threadId) == ["2", "1"])
+        #expect(snapshot.threadTurnGroups.first?.turns.first?.displayTurnID == "turn-2")
     }
 
     @Test
@@ -127,7 +129,7 @@ struct SnapshotAssemblerTests {
     }
 
     @Test
-    func marksZeroReasoningCompletedTurnAsInvalid() {
+    func marksZeroReasoningCompletedTurnAsUnknownWithoutLiveSignal() {
         let zeroTurn = LatestTurn(
             turnId: "turn-zero",
             status: .completed,
@@ -158,8 +160,10 @@ struct SnapshotAssemblerTests {
         )
 
         #expect(snapshot.threads.first?.monitorState == .suspicious)
-        #expect(snapshot.completedSessions.first?.isInvalidReasoning == true)
-        #expect(snapshot.suspiciousCount == 1)
+        #expect(snapshot.completedSessions.first?.signalState == .unknown)
+        #expect(snapshot.completedSessions.first?.isInvalidReasoning == false)
+        #expect(snapshot.suspiciousCount == 0)
+        #expect(snapshot.threadTurnGroups.first?.turns.first?.status == .unknown)
     }
 
     private func date(_ text: String) -> Date {

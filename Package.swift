@@ -3,34 +3,34 @@
 import PackageDescription
 
 let package = Package(
-    name: "codex-rollout-inspector",
+    name: "codex-pulse",
     platforms: [
         .macOS(.v14),
     ],
     products: [
         .library(name: "Core", targets: ["Core"]),
-        .library(name: "CodexRolloutInspectorUI", targets: ["CodexRolloutInspectorUI"]),
-        .executable(name: "CodexRolloutInspectorApp", targets: ["CodexRolloutInspectorApp"]),
+        .library(name: "CodexPulseUI", targets: ["CodexPulseUI"]),
+        .executable(name: "CodexPulseApp", targets: ["CodexPulseApp"]),
     ],
     targets: [
         .target(
             name: "Core"
         ),
         .target(
-            name: "CodexRolloutInspectorUI",
+            name: "CodexPulseUI",
             dependencies: ["Core"]
         ),
         .executableTarget(
-            name: "CodexRolloutInspectorApp",
-            dependencies: ["CodexRolloutInspectorUI"]
+            name: "CodexPulseApp",
+            dependencies: ["CodexPulseUI"]
         ),
         .testTarget(
             name: "CoreTests",
             dependencies: ["Core"]
         ),
         .testTarget(
-            name: "CodexRolloutInspectorAppTests",
-            dependencies: ["Core", "CodexRolloutInspectorUI"]
+            name: "CodexPulseAppTests",
+            dependencies: ["Core", "CodexPulseUI"]
         ),
     ]
 )
