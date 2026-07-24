@@ -6,23 +6,70 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   release:
     runs-on: macos-15
+    env:
+      CODEXIQ_SIGNING_IDENTITY: ${{ vars.CODEXIQ_SIGNING_IDENTITY }}
+      CODEXIQ_NOTARY_PROFILE: ${{ vars.CODEXIQ_NOTARY_PROFILE }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Enforce notarized-publication gate
+        env:
+          RELEASES_ENABLED: ${{ vars.CODEXIQ_NOTARIZED_RELEASES_ENABLED }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$RELEASES_ENABLED" != "true" ]]; then
+            echo "Public App releases are disabled until Developer ID signing and notarization are implemented." >&2
+            exit 1
+          fi
+          if [[ -z "$CODEXIQ_SIGNING_IDENTITY" || -z "$CODEXIQ_NOTARY_PROFILE" ]]; then
+            echo "The signing identity and notary profile contract are not configured." >&2
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Refusing to replace the existing $GITHUB_REF_NAME release." >&2
+            exit 1
+          fi
       - name: Test
         run: swift test
-      - name: Package
-        run: ./scripts/package_release.sh "${GITHUB_REF_NAME#v}"
-      - name: Publish GitHub release
+      - name: Sign, notarize, staple, and package
+        run: ./scripts/package_release.sh --public "${GITHUB_REF_NAME#v}"
+      - name: Preserve signed release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: "CodexIQ-${{ github.ref_name }}"
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: "CodexIQ-${{ github.ref_name }}"
+          path: dist
+      - name: Publish immutable GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          (cd dist && sha256sum --check ./*.sha256)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Refusing to replace the existing $GITHUB_REF_NAME release." >&2
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             dist/*.zip \
             dist/*.sha256 \
             --generate-notes \
-            --title "Codex Pulse ${GITHUB_REF_NAME#v}"
+            --title "CodexIQ ${GITHUB_REF_NAME#v}"

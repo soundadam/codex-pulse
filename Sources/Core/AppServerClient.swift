@@ -109,11 +109,7 @@ private struct JSONRPCInitializeParams: Encodable {
         let optOutNotificationMethods: [String]
     }
 
-    let clientInfo = ClientInfo(
-        name: "codex_pulse",
-        title: "Codex Pulse",
-        version: "1.0.1"
-    )
+    let clientInfo: ClientInfo
     let capabilities = Capabilities(
         experimentalApi: true,
         requestAttestation: false,
@@ -123,6 +119,17 @@ private struct JSONRPCInitializeParams: Encodable {
             "skills/changed",
         ]
     )
+
+    init() {
+        let bundleVersion = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String
+        clientInfo = ClientInfo(
+            name: "codex_pulse",
+            title: "CodexIQ",
+            version: bundleVersion ?? "development"
+        )
+    }
 }
 
 private struct JSONRPCRequest<Params: Encodable>: Encodable {

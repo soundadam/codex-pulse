@@ -54,6 +54,19 @@ public struct LiveSessionContext: Sendable, Equatable {
 }
 
 public enum ReasoningSignalRule {
+    public static func isInvalidReasoningTokenCount(
+        _ value: Int,
+        suspiciousModulo: Int
+    ) -> Bool {
+        if value == 0 {
+            return true
+        }
+        guard suspiciousModulo > 0 else {
+            return false
+        }
+        return value > 0 && value.isMultiple(of: suspiciousModulo)
+    }
+
     public static func hitsInvalidSignal(
         _ tokenUsage: TurnTokenUsageSnapshot,
         suspiciousModulo: Int
@@ -63,15 +76,8 @@ public enum ReasoningSignalRule {
             tokenUsage.total.reasoningOutputTokens,
         ]
 
-        if values.contains(0) {
-            return true
-        }
-
-        guard suspiciousModulo > 0 else {
-            return false
-        }
         return values.contains { value in
-            value > 0 && value.isMultiple(of: suspiciousModulo)
+            isInvalidReasoningTokenCount(value, suspiciousModulo: suspiciousModulo)
         }
     }
 }

@@ -4,8 +4,8 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
-    <key>CFBundleDisplayName</key>
-    <string>Codex Pulse</string>
+	<key>CFBundleDisplayName</key>
+	<string>CodexIQ</string>
     <key>CFBundleExecutable</key>
     <string>CodexPulseRuntime</string>
     <key>CFBundleIconFile</key>
@@ -14,8 +14,8 @@
     <string>com.soundadam.codex-pulse</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>Codex Pulse</string>
+	<key>CFBundleName</key>
+	<string>CodexIQ</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

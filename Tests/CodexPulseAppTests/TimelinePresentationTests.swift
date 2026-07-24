@@ -194,6 +194,15 @@ struct TimelinePresentationTests {
     }
 
     @Test
+    func linearSampleScaleStartsAtZeroAndRoundsUp() {
+        let domain = TimelineLinearScale.domain(for: [0, 65, 420])
+
+        #expect(domain == 0...500)
+        #expect(TimelineLinearScale.axisValues(for: domain) == [0, 250, 500])
+        #expect(TimelineLinearScale.domain(for: [0]) == 0...10)
+    }
+
+    @Test
     func sampleDownsamplingPreservesEndpointsAndExtrema() {
         let start = date("2026-07-10T09:50:00.000Z")
         let samples = (0..<100).map { index in
@@ -209,6 +218,23 @@ struct TimelinePresentationTests {
         #expect(reduced.first?.id == "0")
         #expect(reduced.last?.id == "99")
         #expect(reduced.contains(where: { $0.reasoningTokens == 5_000 }))
+    }
+
+    @Test
+    func sampleDownsamplingPreservesInvalidCalls() {
+        let start = date("2026-07-10T09:50:00.000Z")
+        let samples = (0..<100).map { index in
+            TimelineSamplePoint(
+                id: "\(index)",
+                timestamp: start.addingTimeInterval(Double(index)),
+                reasoningTokens: 100,
+                isInvalid: index == 51
+            )
+        }
+        let reduced = TimelineSampleDownsampler.reduce(samples, limit: 20)
+
+        #expect(reduced.count <= 20)
+        #expect(reduced.contains(where: { $0.id == "51" && $0.isInvalid }))
     }
 
     @Test

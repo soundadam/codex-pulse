@@ -91,17 +91,25 @@ struct TimelinePoint: Identifiable, Equatable {
         }
     }
 
-    var displayedReasoningSamples: [TimelineSamplePoint] {
-        TimelineSampleDownsampler.reduce(reasoningSamples, limit: 36)
-    }
 }
 
 struct TimelineSamplePoint: Identifiable, Equatable {
     let id: String
     let timestamp: Date
     let reasoningTokens: Int
+    let isInvalid: Bool
 
-    var plotReasoningTokens: Double { TimelineLogScale.plotValue(reasoningTokens) }
+    init(
+        id: String,
+        timestamp: Date,
+        reasoningTokens: Int,
+        isInvalid: Bool = false
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.reasoningTokens = reasoningTokens
+        self.isInvalid = isInvalid
+    }
 }
 
 enum TimelineLogScale {
@@ -119,6 +127,22 @@ enum TimelineLogScale {
 
         let exponent = ceil(log10(maximum))
         return floor...max(10, pow(10, exponent))
+    }
+}
+
+enum TimelineLinearScale {
+    static func domain(for tokenValues: [Int]) -> ClosedRange<Double> {
+        let maximum = Double(tokenValues.map { max(0, $0) }.max() ?? 0)
+        guard maximum > 10 else {
+            return 0...10
+        }
+        let magnitude = pow(10, floor(log10(maximum)))
+        let upperBound = ceil(maximum / magnitude) * magnitude
+        return 0...upperBound
+    }
+
+    static func axisValues(for domain: ClosedRange<Double>) -> [Double] {
+        [domain.lowerBound, domain.upperBound / 2, domain.upperBound]
     }
 }
 
@@ -266,14 +290,72 @@ enum TimelineSampleDownsampler {
         }
 
         selected.append(sorted[sorted.count - 1])
-        return Array(
-            selected
+        return preserveInvalidSamples(
+            in: sorted,
+            preferredSamples: selected,
+            limit: limit
+        )
+    }
+
+    private static func preserveInvalidSamples(
+        in sorted: [TimelineSamplePoint],
+        preferredSamples: [TimelineSamplePoint],
+        limit: Int
+    ) -> [TimelineSamplePoint] {
+        let endpoints = deduplicated([sorted[0], sorted[sorted.count - 1]])
+        let endpointIDs = Set(endpoints.map(\.id))
+        let invalidInterior = sorted.filter {
+            $0.isInvalid && endpointIDs.contains($0.id) == false
+        }
+
+        if endpoints.count + invalidInterior.count >= limit {
+            let retainedInvalid = evenlyDistributed(
+                invalidInterior,
+                count: max(0, limit - endpoints.count)
+            )
+            return (endpoints + retainedInvalid).sorted(by: sampleDateAscending)
+        }
+
+        let protected = endpoints + invalidInterior
+        let protectedIDs = Set(protected.map(\.id))
+        let optional = deduplicated(preferredSamples)
+            .filter { protectedIDs.contains($0.id) == false }
+        let retainedOptional = evenlyDistributed(
+            optional,
+            count: min(optional.count, limit - protected.count)
+        )
+        return (protected + retainedOptional).sorted(by: sampleDateAscending)
+    }
+
+    private static func evenlyDistributed(
+        _ samples: [TimelineSamplePoint],
+        count: Int
+    ) -> [TimelineSamplePoint] {
+        guard count > 0, samples.isEmpty == false else {
+            return []
+        }
+        guard count < samples.count else {
+            return samples
+        }
+        guard count > 1 else {
+            return [samples[samples.count / 2]]
+        }
+        return (0..<count).map { index in
+            let position = Double(index) * Double(samples.count - 1) / Double(count - 1)
+            return samples[Int(position.rounded())]
+        }
+    }
+
+    private static func deduplicated(
+        _ samples: [TimelineSamplePoint]
+    ) -> [TimelineSamplePoint] {
+        Array(
+            samples
                 .reduce(into: [String: TimelineSamplePoint]()) { result, sample in
                     result[sample.id] = sample
                 }
                 .values
                 .sorted(by: sampleDateAscending)
-                .prefix(limit)
         )
     }
 

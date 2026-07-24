@@ -5,12 +5,13 @@ import SwiftUI
 
 struct InspectorRootView: View {
     @Bindable var model: AppModel
+    let contentSize: CGSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             InspectorHeader(model: model)
-                .padding(.horizontal, 12)
-                .frame(height: 48)
+                .padding(.horizontal, 14)
+                .frame(height: 52)
 
             Divider()
                 .opacity(0.55)
@@ -30,16 +31,10 @@ struct InspectorRootView: View {
                 .padding(.top, model.errorBannerMessage == nil ? 8 : 0)
                 .padding(.bottom, 10)
         }
-        .frame(width: 760, height: 520, alignment: .topLeading)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .windowBackgroundColor),
-                    PulsePalette.accent.opacity(0.045),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        .frame(
+            width: contentSize.width,
+            height: contentSize.height,
+            alignment: .topLeading
         )
     }
 
@@ -52,68 +47,71 @@ private struct InspectorHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [PulsePalette.accent, PulsePalette.accent.opacity(0.72)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "waveform.path.ecg")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 30, height: 30)
+            Circle()
+                .fill(connectionTint)
+                .frame(width: 7, height: 7)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("Codex Pulse")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(connectionTint)
-                        .frame(width: 5, height: 5)
-                    Text(connectionLabel)
-                    Text("·")
-                    Text(lastRefreshLabel)
-                }
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.secondary)
+                Text("CodexIQ")
+                    .font(.headline)
+                Text("\(connectionLabel) · \(lastRefreshLabel)")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 12)
 
-            CompactHeaderMetric(
-                value: model.invalidTimelineTurnCount,
-                label: "invalid",
-                tint: PulsePalette.invalid
-            )
-            CompactHeaderMetric(
-                value: model.runningThreadCount,
-                label: "running",
-                tint: PulsePalette.running
-            )
-            CompactHeaderMetric(
-                value: model.observedTimelineTurnCount,
-                label: "observed",
-                tint: PulsePalette.valid
-            )
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 13) {
+                    CompactHeaderMetric(
+                        value: model.invalidTimelineTurnCount,
+                        label: "issues",
+                        tint: PulsePalette.invalid
+                    )
+                    CompactHeaderMetric(
+                        value: model.runningThreadCount,
+                        label: "running",
+                        tint: PulsePalette.running
+                    )
+                    CompactHeaderMetric(
+                        value: model.observedTimelineTurnCount,
+                        label: "turns",
+                        tint: PulsePalette.accent
+                    )
+                }
+
+                Text(model.statusTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Divider()
+                .frame(height: 20)
 
             Button {
                 model.refreshNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 24, height: 24)
                     .rotationEffect(model.isRefreshing ? .degrees(180) : .zero)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(PulsePalette.surface))
             }
             .buttonStyle(.plain)
             .keyboardShortcut("r", modifiers: [.command])
             .disabled(model.isRefreshing)
             .help("Refresh now (⌘R)")
             .accessibilityLabel("Refresh Codex telemetry")
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .help("Quit CodexIQ")
+            .accessibilityLabel("Quit CodexIQ")
         }
     }
 
@@ -148,12 +146,23 @@ private struct InspectorTimelineContent: View {
     @ViewBuilder
     var body: some View {
         if model.timelineSeries.isEmpty {
-            ContentUnavailableView(
-                "No turns in this window",
-                systemImage: "chart.xyaxis.line",
-                description: Text("Live and completed turns will appear on the timeline.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                ThreadChartLegend(
+                    series: [],
+                    window: model.selectedTimelineWindow,
+                    selectWindow: model.setTimelineWindow,
+                    selectedThreadID: nil,
+                    selectThread: { _ in }
+                )
+
+                ContentUnavailableView(
+                    "No turns in \(model.selectedTimelineWindow.shortLabel)",
+                    systemImage: "chart.xyaxis.line",
+                    description: Text("Choose a longer history window or wait for new Codex activity.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .padding(10)
             .pulseSurface()
         } else {
             VStack(alignment: .leading, spacing: 6) {
@@ -176,7 +185,7 @@ private struct InspectorTimelineContent: View {
 
                 if model.selectedTimelinePoint != nil {
                     SelectedTurnInspectorPane(model: model)
-                    .frame(height: 134)
+                    .frame(height: 148)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
@@ -205,6 +214,7 @@ private struct SelectedTurnInspectorPane: View {
             ReasoningTurnInspector(
                 point: point,
                 reasoningSamples: model.selectedTurnReasoningSamples,
+                suspiciousModulo: model.suspiciousModulo,
                 isLoadingDetails: model.isLoadingSelectedTurnDetails,
                 openRollout: model.openSelectedRollout
             )
@@ -405,74 +415,83 @@ private struct ThreadChartLegend: View {
     let selectedThreadID: String?
     let selectThread: (String) -> Void
 
-    @State private var showsWindowPicker = false
-
     var body: some View {
         HStack(spacing: 8) {
-            Button {
-                showsWindowPicker.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Text("TURN")
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text(window.shortLabel.uppercased())
-                        .fontDesign(.monospaced)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .font(.system(size: 9, weight: .bold))
-                .tracking(0.6)
-                .foregroundStyle(PulsePalette.accent)
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .popover(isPresented: $showsWindowPicker, arrowEdge: .top) {
-                TimelineWindowWheel(
-                    selection: window,
-                    selectWindow: selectWindow
+            Picker(
+                "History",
+                selection: Binding(
+                    get: { window.rawValue },
+                    set: { rawValue in
+                        guard let nextWindow = TimelineWindow(rawValue: rawValue) else {
+                            return
+                        }
+                        selectWindow(nextWindow)
+                    }
                 )
+            ) {
+                ForEach(TimelineWindow.allCases) { item in
+                    Text(item.shortLabel.uppercased())
+                        .tag(item.rawValue)
+                }
             }
-            .help("Scroll to expand history. Longer windows use more resources.")
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.mini)
+            .frame(width: 168)
+            .help("History window. Longer windows use more resources.")
+            .accessibilityLabel("Timeline history window")
 
             Divider()
                 .frame(height: 15)
 
-            ScrollView(.horizontal, showsIndicators: series.count > 3) {
-                LazyHStack(spacing: 5) {
-                    ForEach(series) { item in
-                        Button {
-                            selectThread(item.threadID)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Capsule(style: .continuous)
-                                    .fill(seriesColor(item))
-                                    .frame(width: 18, height: selectedThreadID == item.threadID ? 4 : 3)
-                                Text(item.shortLabel)
-                                    .font(.system(size: 9.5, weight: selectedThreadID == item.threadID ? .bold : .medium))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .frame(maxWidth: 190)
+            if series.isEmpty {
+                Spacer(minLength: 0)
+            } else {
+                ScrollView(.horizontal, showsIndicators: series.count > 3) {
+                    LazyHStack(spacing: 5) {
+                        ForEach(series) { item in
+                            Button {
+                                selectThread(item.threadID)
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Capsule(style: .continuous)
+                                        .fill(seriesColor(item))
+                                        .frame(
+                                            width: 18,
+                                            height: selectedThreadID == item.threadID ? 4 : 3
+                                        )
+                                    Text(item.shortLabel)
+                                        .font(
+                                            .system(
+                                                size: 9.5,
+                                                weight: selectedThreadID == item.threadID
+                                                    ? .bold
+                                                    : .medium
+                                            )
+                                        )
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .frame(maxWidth: 190)
+                                }
+                                .foregroundStyle(itemForegroundStyle(item))
+                                .opacity(itemOpacity(item))
+                                .padding(.horizontal, 5)
+                                .frame(height: 20)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                        .fill(selectedThreadID == item.threadID
+                                            ? seriesColor(item).opacity(0.20)
+                                            : Color.clear)
+                                )
                             }
-                            .foregroundStyle(itemForegroundStyle(item))
-                            .opacity(itemOpacity(item))
-                            .padding(.horizontal, 5)
-                            .frame(height: 20)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(selectedThreadID == item.threadID
-                                        ? seriesColor(item).opacity(0.20)
-                                        : Color.clear)
-                            )
+                            .buttonStyle(.plain)
+                            .help(item.shortLabel)
                         }
-                        .buttonStyle(.plain)
-                        .help(item.shortLabel)
                     }
                 }
+                .contentMargins(.horizontal, 2, for: .scrollContent)
             }
-            .contentMargins(.horizontal, 2, for: .scrollContent)
         }
         .padding(.horizontal, 7)
         .frame(maxWidth: .infinity, minHeight: 30, maxHeight: 30, alignment: .leading)
@@ -499,96 +518,6 @@ private struct ThreadChartLegend: View {
             return Color.primary
         }
         return selectedThreadID == item.threadID ? Color.primary : Color.secondary
-    }
-}
-
-private struct TimelineWindowWheel: View {
-    let selection: TimelineWindow
-    let selectWindow: (TimelineWindow) -> Void
-
-    @State private var scrollSelection: TimelineWindow?
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Text("HISTORY")
-                .font(.system(size: 8.5, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(.secondary)
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(PulsePalette.accent.opacity(0.10))
-                    .frame(height: 28)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .strokeBorder(PulsePalette.accent.opacity(0.28), lineWidth: 1)
-                    }
-
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(TimelineWindow.allCases) { window in
-                            Text(window.shortLabel)
-                                .font(
-                                    .system(
-                                        size: scrollSelection == window ? 14 : 11,
-                                        weight: scrollSelection == window ? .bold : .medium,
-                                        design: .monospaced
-                                    )
-                                )
-                                .foregroundStyle(
-                                    scrollSelection == window
-                                        ? Color.primary
-                                        : Color.secondary.opacity(0.62)
-                                )
-                                .scaleEffect(scrollSelection == window ? 1 : 0.92)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 28)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    withAnimation(.snappy(duration: 0.22)) {
-                                        scrollSelection = window
-                                    }
-                                }
-                                .id(window)
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.vertical, 42)
-                }
-                .scrollIndicators(.hidden)
-                .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
-                .scrollPosition(id: $scrollSelection, anchor: .center)
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black.opacity(0.30), location: 0.16),
-                            .init(color: .black, location: 0.40),
-                            .init(color: .black, location: 0.60),
-                            .init(color: .black.opacity(0.30), location: 0.84),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-            }
-            .frame(width: 96, height: 112)
-
-            Text("More history uses more resources")
-                .font(.system(size: 8))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(10)
-        .onAppear {
-            scrollSelection = selection
-        }
-        .onChange(of: scrollSelection) { _, nextWindow in
-            if let nextWindow, nextWindow != selection {
-                selectWindow(nextWindow)
-            }
-        }
     }
 }
 
@@ -706,6 +635,7 @@ private enum TurnInspectorPage: Int, CaseIterable, Identifiable {
 private struct ReasoningTurnInspector: View {
     let point: TimelinePoint
     let reasoningSamples: [TurnReasoningSample]
+    let suspiciousModulo: Int
     let isLoadingDetails: Bool
     let openRollout: () -> Bool
 
@@ -719,7 +649,11 @@ private struct ReasoningTurnInspector: View {
             TimelineSamplePoint(
                 id: "\(point.id):detail:\(index):\(sample.id)",
                 timestamp: sample.observedAt,
-                reasoningTokens: sample.reasoningOutputTokens
+                reasoningTokens: sample.reasoningOutputTokens,
+                isInvalid: ReasoningSignalRule.isInvalidReasoningTokenCount(
+                    sample.reasoningOutputTokens,
+                    suspiciousModulo: suspiciousModulo
+                )
             )
         }
     }
@@ -836,7 +770,11 @@ private struct ReasoningTurnInspector: View {
         samples: [TimelineSamplePoint],
         summary: ReasoningSampleSummary
     ) -> some View {
-        HStack(spacing: 12) {
+        let displayedSamples = TimelineSampleDownsampler.reduce(samples, limit: 36)
+        let yDomain = TimelineLinearScale.domain(for: samples.map(\.reasoningTokens))
+        let yAxisValues = TimelineLinearScale.axisValues(for: yDomain)
+
+        return HStack(spacing: 12) {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 2) {
                 metricRow("CALLS", summary.count.formatted())
                 metricRow("REASONING", numberText(point.turnTotalReasoningTokens))
@@ -853,19 +791,28 @@ private struct ReasoningTurnInspector: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Text("MODEL CALL REASONING OVER TIME · LOG")
+                    Text("MODEL CALL REASONING TOKENS · LINEAR")
                         .font(.system(size: 8.5, weight: .bold))
                         .foregroundStyle(.secondary)
                     if isLoadingDetails {
                         ProgressView()
                             .controlSize(.mini)
                     }
+                    Spacer()
+                    if displayedSamples.contains(where: \.isInvalid) {
+                        Circle()
+                            .fill(PulsePalette.invalid)
+                            .frame(width: 4, height: 4)
+                        Text("ISSUE")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundStyle(PulsePalette.invalid)
+                    }
                 }
 
-                Chart(TimelineSampleDownsampler.reduce(samples, limit: 36)) { sample in
+                Chart(displayedSamples) { sample in
                     LineMark(
                         x: .value("Time", sample.timestamp),
-                        y: .value("Reasoning", sample.plotReasoningTokens)
+                        y: .value("Reasoning tokens", sample.reasoningTokens)
                     )
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
@@ -873,17 +820,36 @@ private struct ReasoningTurnInspector: View {
 
                     PointMark(
                         x: .value("Time", sample.timestamp),
-                        y: .value("Reasoning", sample.plotReasoningTokens)
+                        y: .value("Reasoning tokens", sample.reasoningTokens)
                     )
-                    .symbolSize(10)
-                    .foregroundStyle(threadColor.opacity(0.88))
+                    .symbolSize(sample.isInvalid ? 28 : 10)
+                    .foregroundStyle(
+                        sample.isInvalid
+                            ? PulsePalette.invalid
+                            : threadColor.opacity(0.88)
+                    )
                 }
-                .chartYScale(
-                    domain: TimelineLogScale.domain(for: samples.map(\.reasoningTokens)),
-                    type: .log
-                )
+                .chartYScale(domain: yDomain)
                 .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: yAxisValues) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                            .foregroundStyle(Color.secondary.opacity(0.12))
+                        AxisTick(length: 2)
+                            .foregroundStyle(Color.secondary.opacity(0.45))
+                        AxisValueLabel {
+                            if let tokens = value.as(Double.self) {
+                                Text(numberText(Int(tokens.rounded())))
+                                    .font(.system(size: 7.5, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .chartPlotStyle { plotArea in
+                    plotArea
+                        .border(Color.secondary.opacity(0.14), width: 0.5)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)

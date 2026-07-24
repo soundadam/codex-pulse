@@ -31,7 +31,7 @@ struct StatusItemTitleFormatter {
     }
 
     static func accessibilityLabel(for title: String) -> String {
-        "Codex Pulse — \(title)"
+        "CodexIQ — \(title)"
     }
 
 }

@@ -31,7 +31,7 @@ struct AppModelTests {
         )
         #expect(
             StatusItemTitleFormatter.accessibilityLabel(for: "3 running")
-                == "Codex Pulse — 3 running"
+                == "CodexIQ — 3 running"
         )
     }
 

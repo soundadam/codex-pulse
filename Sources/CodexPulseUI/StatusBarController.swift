@@ -1,6 +1,21 @@
 import AppKit
 import SwiftUI
 
+enum InspectorPanelLayout {
+    static let preferredContentSize = CGSize(width: 780, height: 560)
+
+    private static let chromeAllowance = CGSize(width: 32, height: 48)
+
+    static func contentSize(for visibleFrame: CGRect) -> CGSize {
+        let availableWidth = max(1, visibleFrame.width - chromeAllowance.width)
+        let availableHeight = max(1, visibleFrame.height - chromeAllowance.height)
+        return CGSize(
+            width: min(preferredContentSize.width, availableWidth),
+            height: min(preferredContentSize.height, availableHeight)
+        )
+    }
+}
+
 @MainActor
 public final class StatusBarController: NSObject, NSPopoverDelegate {
     private let model: AppModel
@@ -13,14 +28,14 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
 
     public init(model: AppModel) {
         self.model = model
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.popover = NSPopover()
         super.init()
 
         popover.behavior = .applicationDefined
         popover.animates = false
         popover.delegate = self
-        popover.contentSize = NSSize(width: 760, height: 520)
+        popover.contentSize = InspectorPanelLayout.preferredContentSize
 
         if let button = statusItem.button {
             configure(button)
@@ -36,23 +51,38 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
             }
             self?.update(button, title: title)
         }
+
+        #if DEBUG
+        let capturePath = ProcessInfo.processInfo.environment["CODEXIQ_CAPTURE_PATH"]
+        if ProcessInfo.processInfo.environment["CODEXIQ_SHOW_POPOVER"] == "1"
+            || capturePath != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.showPopover()
+            }
+        }
+        if let capturePath {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                self?.capturePopover(to: capturePath)
+            }
+        }
+        #endif
     }
 
     private func configure(_ button: NSStatusBarButton) {
         let symbol = NSImage(
             systemSymbolName: "waveform.path.ecg",
-            accessibilityDescription: "Codex Pulse"
+            accessibilityDescription: "CodexIQ"
         )
         let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         button.image = symbol?.withSymbolConfiguration(configuration) ?? symbol
         button.image?.isTemplate = true
-        button.imagePosition = .imageLeading
+        button.imagePosition = .imageOnly
         button.imageScaling = .scaleProportionallyDown
     }
 
     private func update(_ button: NSStatusBarButton, title: String) {
         let accessibilityLabel = StatusItemTitleFormatter.accessibilityLabel(for: title)
-        button.title = title
+        button.title = ""
         button.toolTip = accessibilityLabel
         button.setAccessibilityLabel(accessibilityLabel)
     }
@@ -76,9 +106,15 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
             return
         }
 
+        let visibleFrame = button.window?.screen?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? CGRect(origin: .zero, size: InspectorPanelLayout.preferredContentSize)
+        let contentSize = InspectorPanelLayout.contentSize(for: visibleFrame)
+
         model.setPopoverVisible(true)
+        popover.contentSize = contentSize
         popover.contentViewController = NSHostingController(
-            rootView: InspectorRootView(model: model)
+            rootView: InspectorRootView(model: model, contentSize: contentSize)
         )
 
         let anchorRect = NSRect(
@@ -189,7 +225,7 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         removeEventMonitors()
         model.setPopoverVisible(false)
         // Releasing the hosting controller tears down Swift Charts and its
-        // retained Canvas/IOSurface backing stores while the popover is closed.
+        // retained Canvas/IOSurface backing stores while the panel is closed.
         popover.contentViewController = nil
     }
 
@@ -220,5 +256,22 @@ public final class StatusBarController: NSObject, NSPopoverDelegate {
         let rectOnScreen = window.convertToScreen(rectInWindow)
         return rectOnScreen.insetBy(dx: -4, dy: -4).contains(point)
     }
+
+    #if DEBUG
+    private func capturePopover(to path: String) {
+        guard let view = popover.contentViewController?.view else {
+            return
+        }
+        view.layoutSubtreeIfNeeded()
+        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            return
+        }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return
+        }
+        try? png.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+    #endif
 
 }

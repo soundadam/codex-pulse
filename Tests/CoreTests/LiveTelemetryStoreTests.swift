@@ -81,6 +81,15 @@ struct LiveTelemetryStoreTests {
         #expect(ReasoningSignalRule.hitsInvalidSignal(usage, suspiciousModulo: 0) == false)
     }
 
+    @Test
+    func classifiesIndividualReasoningCallIssues() {
+        #expect(ReasoningSignalRule.isInvalidReasoningTokenCount(0, suspiciousModulo: 516))
+        #expect(ReasoningSignalRule.isInvalidReasoningTokenCount(516, suspiciousModulo: 516))
+        #expect(ReasoningSignalRule.isInvalidReasoningTokenCount(1_032, suspiciousModulo: 516))
+        #expect(ReasoningSignalRule.isInvalidReasoningTokenCount(420, suspiciousModulo: 516) == false)
+        #expect(ReasoningSignalRule.isInvalidReasoningTokenCount(516, suspiciousModulo: 0) == false)
+    }
+
     private func makeStore() -> LiveTelemetryStore {
         LiveTelemetryStore(
             configuration: LiveTelemetryConfiguration(
